@@ -85,13 +85,13 @@ func run(args []string, stdout, stderr io.Writer) (err error) {
 			writer = file
 		}
 
-		return export.Run(runCtx, created.Sampler, writer, export.Options{
+		return cleanRuntimeCancel(runCtx, export.Run(runCtx, created.Sampler, writer, export.Options{
 			Format:   format,
 			Interval: cfg.Interval,
 			Duration: cfg.Duration,
 			Count:    cfg.Count,
 			Fields:   cfg.Fields,
-		})
+		}))
 	default:
 		runCtx, stop := newRuntimeContext()
 		defer stop()
@@ -110,12 +110,19 @@ func run(args []string, stdout, stderr io.Writer) (err error) {
 				return printErr
 			}
 		}
-		return runTUI(runCtx, created.Sampler, cfg.Interval, ui.Options{
+		return cleanRuntimeCancel(runCtx, runTUI(runCtx, created.Sampler, cfg.Interval, ui.Options{
 			Interval:      cfg.Interval.String(),
 			NoColor:       cfg.NoColor,
 			ForceDCGMView: cfg.DCGM,
-		})
+		}))
 	}
+}
+
+func cleanRuntimeCancel(ctx context.Context, err error) error {
+	if err != nil && errors.Is(err, context.Canceled) && ctx.Err() != nil {
+		return nil
+	}
+	return err
 }
 
 func helpText() string {
