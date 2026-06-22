@@ -11,19 +11,24 @@ const degradedWidth = 72
 
 func (m Model) View() string {
 	var parts []string
+	noColor := m.options.NoColor
+	st := styles(noColor)
 	degraded := m.width > 0 && m.width < degradedWidth
 	if m.err != nil {
 		errText := "error: " + m.err.Error()
 		if m.view == viewTensorWall {
 			errText = truncateRunes(errText, m.width)
+			errText = styleMuted(errText, st, noColor)
 		}
 		parts = append(parts, errText)
 	}
 	if m.view == viewTensorWall {
-		footer := truncateRunes(m.renderFooter(), m.width)
+		footer := truncateRunes(m.renderFooterText(), m.width)
+		footer = styleMuted(footer, st, noColor)
 		help := ""
 		if m.help {
 			help = truncateRunes("keys: t toggle wall | o overview | s sort | p pause | ? help | q quit", m.width)
+			help = styleMuted(help, st, noColor)
 		}
 		bodyBudget := -1
 		if m.height > 0 {
@@ -76,11 +81,20 @@ func (m Model) selectedDevice() gpu.DeviceSample {
 }
 
 func (m Model) renderOverview() string {
-	lines := []string{" #  NAME        UTIL        MEM             TEMP   PWR        CORES"}
+	noColor := m.options.NoColor
+	st := styles(noColor)
+	header := " #  NAME        UTIL        MEM             TEMP   PWR        CORES"
+	if !noColor {
+		header = st.muted.Render(header)
+	}
+	lines := []string{header}
 	for row, device := range SortDevices(m.snapshot.Devices, m.sort) {
 		cursor := " "
 		if row == m.selected {
 			cursor = ">"
+			if !noColor {
+				cursor = st.ok.Render(cursor)
+			}
 		}
 		lines = append(lines, fmt.Sprintf("%s%2d  %-10.10s %-10s %-14s %-6s %-10s %s",
 			cursor,
@@ -149,11 +163,28 @@ func (m Model) renderDetail(device gpu.DeviceSample) string {
 }
 
 func (m Model) renderFooter() string {
-	status := "running"
-	if m.paused {
-		status = "paused"
+	st := styles(m.options.NoColor)
+	statusText := m.footerStatus()
+	status := statusText
+	if !m.options.NoColor {
+		if m.paused {
+			status = st.warn.Render(statusText)
+		} else {
+			status = st.ok.Render(statusText)
+		}
 	}
 	return fmt.Sprintf("%s | interval %s | sort %s | source %s", status, m.options.Interval, m.sort.String(), m.snapshot.Source.String())
+}
+
+func (m Model) renderFooterText() string {
+	return fmt.Sprintf("%s | interval %s | sort %s | source %s", m.footerStatus(), m.options.Interval, m.sort.String(), m.snapshot.Source.String())
+}
+
+func (m Model) footerStatus() string {
+	if m.paused {
+		return "paused"
+	}
+	return "running"
 }
 
 func utilCell(device gpu.DeviceSample) string {

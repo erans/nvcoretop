@@ -27,6 +27,17 @@ func TestRenderOverviewNoColor(t *testing.T) {
 	}
 }
 
+func TestRenderOverviewUsesColorWhenEnabled(t *testing.T) {
+	model := NewModel(Options{})
+	model, _ = updateModel(model, SnapshotMsg(snapshotWithDevices(2)))
+	model, _ = updateModel(model, tea.WindowSizeMsg{Width: 100, Height: 30})
+
+	view := model.View()
+	if !strings.Contains(view, "\x1b[") {
+		t.Fatalf("colored overview missing ANSI escapes:\n%s", view)
+	}
+}
+
 func TestRenderDetail(t *testing.T) {
 	model := NewModel(Options{NoColor: true})
 	model, _ = updateModel(model, SnapshotMsg(snapshotWithDevices(1)))
@@ -165,6 +176,23 @@ func TestRenderTensorWallNoColorMultipleGPUs(t *testing.T) {
 	}
 }
 
+func TestRenderTensorWallUsesColorWhenEnabled(t *testing.T) {
+	model := NewModel(Options{})
+	model, _ = updateModel(model, SnapshotMsg(snapshotWithTensorActivity()))
+	model, _ = updateModel(model, tea.WindowSizeMsg{Width: 120, Height: 40})
+	model, _ = updateModel(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+
+	view := model.View()
+	if !strings.Contains(view, "\x1b[") {
+		t.Fatalf("colored tensor wall missing ANSI escapes:\n%s", view)
+	}
+	for _, want := range []string{"Tensor Pipe 92%", "DRAM 71%"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("colored tensor wall missing unstyled text %q in:\n%s", want, view)
+		}
+	}
+}
+
 func TestRenderTensorWallEmptySnapshot(t *testing.T) {
 	model := NewModel(Options{NoColor: true})
 	model, _ = updateModel(model, tea.WindowSizeMsg{Width: 100, Height: 20})
@@ -174,6 +202,29 @@ func TestRenderTensorWallEmptySnapshot(t *testing.T) {
 	for _, want := range []string{"Tensor/DRAM Activity Wall", "waiting for GPU samples"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("empty tensor wall missing %q in:\n%s", want, view)
+		}
+	}
+}
+
+func TestRenderTensorWallColoredLineWidthBounded(t *testing.T) {
+	model := NewModel(Options{Interval: "very-long-refresh-interval-for-width-test"})
+	snapshot := snapshotWithTensorActivity()
+	for i := range snapshot.Devices {
+		snapshot.Devices[i].Name = "NVIDIA H100 SXM5 80GB Very Long Engineering Sample Name"
+	}
+	model, _ = updateModel(model, SnapshotMsg(snapshot))
+	model, _ = updateModel(model, tea.WindowSizeMsg{Width: 48, Height: 18})
+	model, _ = updateModel(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	model, _ = updateModel(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+
+	view := model.View()
+	if !strings.Contains(view, "\x1b[") {
+		t.Fatalf("colored tensor wall missing ANSI escapes:\n%s", view)
+	}
+	for _, line := range strings.Split(view, "\n") {
+		plain := stripANSI(line)
+		if got := utf8.RuneCountInString(plain); got > model.width {
+			t.Fatalf("colored tensor wall plain line length = %d, want <= %d:\n%s", got, model.width, view)
 		}
 	}
 }
@@ -353,6 +404,31 @@ func TestRenderTensorWallUsesSortOrder(t *testing.T) {
 	if first == -1 || second == -1 || third == -1 || !(first < second && second < third) {
 		t.Fatalf("tensor wall GPU order not sorted by util in:\n%s", view)
 	}
+}
+
+func stripANSI(value string) string {
+	var builder strings.Builder
+	for i := 0; i < len(value); i++ {
+		b := value[i]
+		if b != '\x1b' {
+			builder.WriteByte(b)
+			continue
+		}
+		if i+1 >= len(value) {
+			continue
+		}
+		i++
+		if value[i] != '[' {
+			continue
+		}
+		for i+1 < len(value) {
+			i++
+			if value[i] >= '@' && value[i] <= '~' {
+				break
+			}
+		}
+	}
+	return builder.String()
 }
 
 func snapshotWithTensorActivity() gpu.Snapshot {
