@@ -188,6 +188,61 @@ func TestSampleReturnsContextErrorBeforeSampling(t *testing.T) {
 	}
 }
 
+func TestSampleComputesNVLinkThroughputAfterFirstTotals(t *testing.T) {
+	device := minimalMockDevice()
+	device.GetNvLinkStateFunc = func(link int) (nvidia.EnableState, nvidia.Return) {
+		if link == 0 {
+			return nvidia.FEATURE_ENABLED, nvidia.SUCCESS
+		}
+		return nvidia.FEATURE_DISABLED, nvidia.SUCCESS
+	}
+
+	counterCalls := 0
+	device.GetNvLinkUtilizationCounterFunc = func(link int, counter int) (uint64, uint64, nvidia.Return) {
+		if link != 0 || counter != 0 {
+			t.Fatalf("NVLink counter = link %d counter %d, want link 0 counter 0", link, counter)
+		}
+		counterCalls++
+		if counterCalls == 1 {
+			return 2048, 1024, nvidia.SUCCESS
+		}
+		return 6144, 3072, nvidia.SUCCESS
+	}
+
+	timestamps := []time.Time{time.Unix(10, 0), time.Unix(12, 0)}
+	nowCalls := 0
+	installFakeNVML(t, &fakeNVML{count: 1, handles: []nvidia.Device{device}})
+	sampler, err := New(Options{
+		Now: func() time.Time {
+			if nowCalls >= len(timestamps) {
+				t.Fatalf("unexpected Now call %d", nowCalls+1)
+			}
+			at := timestamps[nowCalls]
+			nowCalls++
+			return at
+		},
+	})
+	if err != nil {
+		t.Fatalf("New error = %v", err)
+	}
+	defer sampler.Close()
+
+	first, err := sampler.Sample(context.Background())
+	if err != nil {
+		t.Fatalf("first Sample error = %v", err)
+	}
+	if first.Devices[0].NVLinkTxKBps.OK || first.Devices[0].NVLinkRxKBps.OK {
+		t.Fatalf("first NVLink throughput = tx %#v rx %#v, want missing", first.Devices[0].NVLinkTxKBps, first.Devices[0].NVLinkRxKBps)
+	}
+
+	second, err := sampler.Sample(context.Background())
+	if err != nil {
+		t.Fatalf("second Sample error = %v", err)
+	}
+	assertOptional(t, "NVLinkTxKBps", second.Devices[0].NVLinkTxKBps, uint64(1))
+	assertOptional(t, "NVLinkRxKBps", second.Devices[0].NVLinkRxKBps, uint64(2))
+}
+
 type fakeNVML struct {
 	initRet     nvidia.Return
 	count       int

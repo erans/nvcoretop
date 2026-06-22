@@ -109,3 +109,31 @@ func mapThrottleReasons(bits uint64) gpu.ThrottleReasons {
 		HWPowerBrake:       bits&nvidia.ClocksThrottleReasonHwPowerBrakeSlowdown != 0,
 	}
 }
+
+func readNVLinkTotals(device nvidia.Device, at time.Time) (nvlinkTotals, bool) {
+	totals := nvlinkTotals{at: at}
+	found := false
+	for link := 0; link < maxNVLinks; link++ {
+		state, ret := device.GetNvLinkState(link)
+		if !ok(ret) || state != nvidia.FEATURE_ENABLED {
+			continue
+		}
+		rx, tx, ret := device.GetNvLinkUtilizationCounter(link, 0)
+		if !ok(ret) {
+			continue
+		}
+		totals.rx += rx
+		totals.tx += tx
+		found = true
+	}
+	return totals, found
+}
+
+func applyNVLinkDelta(sample *gpu.DeviceSample, previous, current nvlinkTotals) {
+	elapsed := current.at.Sub(previous.at).Seconds()
+	if elapsed <= 0 || current.tx < previous.tx || current.rx < previous.rx {
+		return
+	}
+	sample.NVLinkTxKBps = gpu.Some(uint64((float64(current.tx-previous.tx) / 1024) / elapsed))
+	sample.NVLinkRxKBps = gpu.Some(uint64((float64(current.rx-previous.rx) / 1024) / elapsed))
+}

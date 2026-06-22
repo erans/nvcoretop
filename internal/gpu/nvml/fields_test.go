@@ -2,6 +2,7 @@ package nvml
 
 import (
 	"testing"
+	"time"
 
 	nvidia "github.com/NVIDIA/go-nvml/pkg/nvml"
 	"github.com/NVIDIA/go-nvml/pkg/nvml/mock"
@@ -139,6 +140,62 @@ func TestUnsupportedFieldsStayMissing(t *testing.T) {
 	}
 }
 
+func TestApplyNVLinkDelta(t *testing.T) {
+	previous := nvlinkTotals{at: time.Unix(10, 0), tx: 1024, rx: 2048}
+	current := nvlinkTotals{at: time.Unix(12, 0), tx: 3072, rx: 6144}
+	sample := gpu.DeviceSample{Index: 0}
+
+	applyNVLinkDelta(&sample, previous, current)
+
+	if !sample.NVLinkTxKBps.OK || sample.NVLinkTxKBps.Value != 1 {
+		t.Fatalf("NVLinkTxKBps = %#v, want 1", sample.NVLinkTxKBps)
+	}
+	if !sample.NVLinkRxKBps.OK || sample.NVLinkRxKBps.Value != 2 {
+		t.Fatalf("NVLinkRxKBps = %#v, want 2", sample.NVLinkRxKBps)
+	}
+}
+
+func TestApplyNVLinkDeltaSkipsInvalidDeltas(t *testing.T) {
+	tests := []struct {
+		name     string
+		previous nvlinkTotals
+		current  nvlinkTotals
+	}{
+		{
+			name:     "zero elapsed",
+			previous: nvlinkTotals{at: time.Unix(10, 0), tx: 1024, rx: 1024},
+			current:  nvlinkTotals{at: time.Unix(10, 0), tx: 2048, rx: 2048},
+		},
+		{
+			name:     "negative elapsed",
+			previous: nvlinkTotals{at: time.Unix(10, 0), tx: 1024, rx: 1024},
+			current:  nvlinkTotals{at: time.Unix(9, 0), tx: 2048, rx: 2048},
+		},
+		{
+			name:     "tx rolls backward",
+			previous: nvlinkTotals{at: time.Unix(10, 0), tx: 2048, rx: 1024},
+			current:  nvlinkTotals{at: time.Unix(12, 0), tx: 1024, rx: 2048},
+		},
+		{
+			name:     "rx rolls backward",
+			previous: nvlinkTotals{at: time.Unix(10, 0), tx: 1024, rx: 2048},
+			current:  nvlinkTotals{at: time.Unix(12, 0), tx: 2048, rx: 1024},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sample := gpu.DeviceSample{Index: 0}
+
+			applyNVLinkDelta(&sample, tt.previous, tt.current)
+
+			if sample.NVLinkTxKBps.OK || sample.NVLinkRxKBps.OK {
+				t.Fatalf("NVLink throughput = tx %#v rx %#v, want missing", sample.NVLinkTxKBps, sample.NVLinkRxKBps)
+			}
+		})
+	}
+}
+
 func minimalMockDevice() *mock.Device {
 	return &mock.Device{
 		GetNameFunc:             func() (string, nvidia.Return) { return "GPU", nvidia.SUCCESS },
@@ -163,6 +220,9 @@ func minimalMockDevice() *mock.Device {
 		},
 		GetTotalEccErrorsFunc: func(nvidia.MemoryErrorType, nvidia.EccCounterType) (uint64, nvidia.Return) {
 			return 0, nvidia.ERROR_NOT_SUPPORTED
+		},
+		GetNvLinkStateFunc: func(int) (nvidia.EnableState, nvidia.Return) {
+			return nvidia.FEATURE_DISABLED, nvidia.SUCCESS
 		},
 	}
 }

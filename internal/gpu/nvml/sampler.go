@@ -16,12 +16,13 @@ type Options struct {
 }
 
 type Sampler struct {
-	mu       sync.Mutex
-	devices  []nvidia.Device
-	now      func() time.Time
-	enricher gpu.Enricher
-	closed   bool
-	closeErr error
+	mu         sync.Mutex
+	devices    []nvidia.Device
+	now        func() time.Time
+	enricher   gpu.Enricher
+	lastNVLink map[int]nvlinkTotals
+	closed     bool
+	closeErr   error
 }
 
 func New(options Options) (*Sampler, error) {
@@ -49,9 +50,10 @@ func New(options Options) (*Sampler, error) {
 	}
 
 	return &Sampler{
-		devices:  devices,
-		now:      now,
-		enricher: options.Enricher,
+		devices:    devices,
+		now:        now,
+		enricher:   options.Enricher,
+		lastNVLink: make(map[int]nvlinkTotals),
 	}, nil
 }
 
@@ -72,7 +74,17 @@ func (s *Sampler) Sample(ctx context.Context) (gpu.Snapshot, error) {
 		Devices:   make([]gpu.DeviceSample, 0, len(s.devices)),
 	}
 	for index, device := range s.devices {
-		snapshot.Devices = append(snapshot.Devices, sampleDevice(index, device, processNameFromProc, nil))
+		deviceSample := sampleDevice(index, device, processNameFromProc, nil)
+		if totals, found := readNVLinkTotals(device, snapshot.Timestamp); found {
+			if previous, ok := s.lastNVLink[index]; ok {
+				applyNVLinkDelta(&deviceSample, previous, totals)
+			}
+			if s.lastNVLink == nil {
+				s.lastNVLink = make(map[int]nvlinkTotals)
+			}
+			s.lastNVLink[index] = totals
+		}
+		snapshot.Devices = append(snapshot.Devices, deviceSample)
 	}
 
 	if s.enricher != nil {
