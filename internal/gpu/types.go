@@ -137,3 +137,10 @@ type Sampler interface {
 	DeviceCount() int
 	Close() error
 }
+
+type Enricher interface {
+	Enrich(context.Context, Snapshot) (Snapshot, error)
+	Active() bool
+	Notice() string
+	Close() error
+}
