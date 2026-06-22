@@ -19,7 +19,7 @@ same data path either as an interactive TUI or as script-friendly JSONL/CSV.
   core activity.
 - Detail view with trends, clocks, throttle reasons, fan speed, process VRAM,
   PCIe throughput, NVLink throughput, and ECC counters.
-- Optional DCGM activity fields for SM, Tensor, memory-pipe, and FP32 activity.
+- Optional DCGM activity fields for SM, Tensor Pipe, DRAM, and FP32 activity.
 - JSONL and CSV export modes for logging, dashboards, and shell pipelines.
 - Graceful fallback for unsupported metrics, missing DCGM, permission-limited
   process queries, and small terminals.
@@ -98,6 +98,8 @@ error. Without `--dcgm`, the tool falls back to NVML-only data.
 - `enter` / `tab`: expand or collapse detail
 - `s`: cycle sort mode
 - `d`: toggle the DCGM activity view
+- `t`: toggle the all-GPU Tensor/DRAM wall
+- `o`: return to overview
 - `p`: pause sampling
 - `?`: show help
 - `q`: quit
@@ -139,7 +141,7 @@ builds a Linux amd64 binary with DCGM support and the tag injected into
 `nvcoretop --version`, packages `nvcoretop`, `README.md`, and `LICENSE`, then
 attaches the tarball and SHA256 checksum to the GitHub Release.
 
-The release binary can show real SM/Tensor/memory-pipe/FP32 activity when the
+The release binary can show real SM/Tensor Pipe/DRAM/FP32 activity when the
 host has the DCGM runtime available. Without DCGM at runtime, it falls back to
 NVML-only data unless `--dcgm` is forced.
 

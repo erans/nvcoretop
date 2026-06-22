@@ -47,7 +47,7 @@ func (m Model) renderTensorWall(lineBudget int) string {
 		remainingDevices := len(devices) - i
 		if !unlimited {
 			availableLines := lineBudget - len(lines)
-			if neededLines > availableLines || (i > 0 && remainingDevices > 1 && neededLines == availableLines) {
+			if neededLines > availableLines {
 				if availableLines > 0 {
 					overflow := truncateRunes(fmt.Sprintf("... %d more GPU(s)", remainingDevices), m.width)
 					lines = append(lines, styleMuted(overflow, st, noColor))

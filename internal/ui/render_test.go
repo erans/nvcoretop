@@ -334,6 +334,28 @@ func TestRenderTensorWallDropsSecondaryContextBeforePrimaryBlocks(t *testing.T) 
 	}
 }
 
+func TestRenderTensorWallExactFitShowsPrimaryBlockBeforeOverflowMarker(t *testing.T) {
+	model := NewModel(Options{NoColor: true})
+	snapshot := snapshotWithTensorActivity()
+	model, _ = updateModel(model, SnapshotMsg(snapshot))
+	model, _ = updateModel(model, tea.WindowSizeMsg{Width: 100, Height: 13})
+	model, _ = updateModel(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+
+	view := model.View()
+	lines := strings.Split(view, "\n")
+	if len(lines) != model.height {
+		t.Fatalf("tensor wall line count = %d, want exact height %d:\n%s", len(lines), model.height, view)
+	}
+	for _, want := range []string{"GPU 0", "GPU 1", "Tensor Pipe 63%", "DRAM 51%"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("exact-fit compact tensor wall missing %q in:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "... 2 more GPU(s)") {
+		t.Fatalf("exact-fit compact tensor wall replaced a fitting GPU block with overflow:\n%s", view)
+	}
+}
+
 func TestRenderTensorWallExactFitShowsGPUBlockBeforeOverflow(t *testing.T) {
 	model := NewModel(Options{NoColor: true})
 	snapshot := snapshotWithTensorActivity()
