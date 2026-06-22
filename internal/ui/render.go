@@ -11,16 +11,21 @@ const degradedWidth = 72
 
 func (m Model) View() string {
 	var parts []string
+	degraded := m.width > 0 && m.width < degradedWidth
 	if m.err != nil {
 		parts = append(parts, "error: "+m.err.Error())
 	}
-	if m.width > 0 && m.width < degradedWidth {
+	if degraded {
 		parts = append(parts, m.renderDegraded())
 	} else {
 		parts = append(parts, m.renderOverview())
 	}
 	if m.detail && len(m.snapshot.Devices) > 0 {
-		parts = append(parts, m.renderDetail(m.selectedDevice()))
+		detail := m.renderDetail(m.selectedDevice())
+		if degraded {
+			detail = truncateLines(detail, m.width)
+		}
+		parts = append(parts, detail)
 	}
 	parts = append(parts, m.renderFooter())
 	if m.help {
@@ -214,4 +219,12 @@ func truncateRunes(value string, width int) string {
 		return string(runes[:width])
 	}
 	return string(runes[:width-3]) + "..."
+}
+
+func truncateLines(value string, width int) string {
+	lines := strings.Split(value, "\n")
+	for i, line := range lines {
+		lines[i] = truncateRunes(line, width)
+	}
+	return strings.Join(lines, "\n")
 }

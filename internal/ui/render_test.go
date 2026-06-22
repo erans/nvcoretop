@@ -103,3 +103,20 @@ func TestRenderDegradedLongNameWidthBounded(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderDegradedDetailLongNameWidthBounded(t *testing.T) {
+	model := NewModel(Options{NoColor: true})
+	snapshot := snapshotWithDevices(1)
+	snapshot.Devices[0].Name = "NVIDIA RTX 6000 Ada Generation Very Long Engineering Sample"
+	model, _ = updateModel(model, SnapshotMsg(snapshot))
+	model.detail = true
+	model.width = 60
+	model.height = 20
+
+	view := model.View()
+	for _, line := range strings.Split(view, "\n") {
+		if got := utf8.RuneCountInString(line); got > model.width {
+			t.Fatalf("degraded detail line length = %d, want <= %d:\n%s", got, model.width, view)
+		}
+	}
+}
