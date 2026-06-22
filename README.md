@@ -137,6 +137,9 @@ builds a Linux amd64 binary with the tag injected into `nvcoretop --version`,
 packages `nvcoretop`, `README.md`, and `LICENSE`, then attaches the tarball and
 SHA256 checksum to the GitHub Release.
 
+Release candidate tags such as `v0.1.0-rc1` or `v0.1.0-rc.1` are published as
+GitHub prereleases.
+
 For a local versioned build:
 
 ```sh
