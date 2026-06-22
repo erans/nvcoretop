@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"nvcoretop/internal/gpu"
 )
@@ -33,9 +34,9 @@ func TestRenderOverviewUsesColorWhenEnabled(t *testing.T) {
 	model, _ = updateModel(model, tea.WindowSizeMsg{Width: 100, Height: 30})
 
 	view := model.View()
-	if !strings.Contains(view, "\x1b[") {
-		t.Fatalf("colored overview missing ANSI escapes:\n%s", view)
-	}
+	assertPlainLineColored(t, view, "#  NAME        UTIL")
+	selected := lineByPlainContains(t, view, "> 0  RTX")
+	assertColoredSegmentOccurrence(t, selected, ">", 1)
 }
 
 func TestRenderDetail(t *testing.T) {
@@ -178,19 +179,29 @@ func TestRenderTensorWallNoColorMultipleGPUs(t *testing.T) {
 
 func TestRenderTensorWallUsesColorWhenEnabled(t *testing.T) {
 	model := NewModel(Options{})
-	model, _ = updateModel(model, SnapshotMsg(snapshotWithTensorActivity()))
+	snapshot := snapshotWithTensorActivity()
+	snapshot.Devices[0].Name = "Tensor Pipe 92%"
+	model, _ = updateModel(model, SnapshotMsg(snapshot))
 	model, _ = updateModel(model, tea.WindowSizeMsg{Width: 120, Height: 40})
 	model, _ = updateModel(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	model, _ = updateModel(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
 
 	view := model.View()
-	if !strings.Contains(view, "\x1b[") {
-		t.Fatalf("colored tensor wall missing ANSI escapes:\n%s", view)
-	}
-	for _, want := range []string{"Tensor Pipe 92%", "DRAM 71%"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("colored tensor wall missing unstyled text %q in:\n%s", want, view)
-		}
-	}
+	assertPlainLineColored(t, view, "Tensor/DRAM Activity Wall")
+
+	header := lineByPlainContains(t, view, "GPU 0 Tensor Pipe 92%  Tensor Pipe 92%  DRAM 71%")
+	assertColoredSegmentOccurrence(t, header, "Tensor Pipe 92%", 2)
+	assertColoredSegmentOccurrence(t, header, "DRAM 71%", 1)
+
+	summary := lineByPlainEqual(t, view, "  Tensor Pipe 92%")
+	assertColoredSegmentOccurrence(t, summary, "Tensor Pipe", 1)
+	assertColoredSegmentOccurrence(t, summary, "92%", 1)
+
+	heatmap := lineByPlainContains(t, view, "  █")
+	assertColoredSegmentOccurrence(t, heatmap, "█", 1)
+
+	assertPlainLineColored(t, view, "running | interval")
+	assertPlainLineColored(t, view, "keys: t toggle wall")
 }
 
 func TestRenderTensorWallEmptySnapshot(t *testing.T) {
@@ -210,7 +221,7 @@ func TestRenderTensorWallColoredLineWidthBounded(t *testing.T) {
 	model := NewModel(Options{Interval: "very-long-refresh-interval-for-width-test"})
 	snapshot := snapshotWithTensorActivity()
 	for i := range snapshot.Devices {
-		snapshot.Devices[i].Name = "NVIDIA H100 SXM5 80GB Very Long Engineering Sample Name"
+		snapshot.Devices[i].Name = "Ｈ１００ ＳＸＭ５ ８０ＧＢ Very Long Engineering Sample Name"
 	}
 	model, _ = updateModel(model, SnapshotMsg(snapshot))
 	model, _ = updateModel(model, tea.WindowSizeMsg{Width: 48, Height: 18})
@@ -223,8 +234,8 @@ func TestRenderTensorWallColoredLineWidthBounded(t *testing.T) {
 	}
 	for _, line := range strings.Split(view, "\n") {
 		plain := stripANSI(line)
-		if got := utf8.RuneCountInString(plain); got > model.width {
-			t.Fatalf("colored tensor wall plain line length = %d, want <= %d:\n%s", got, model.width, view)
+		if got := lipgloss.Width(plain); got > model.width {
+			t.Fatalf("colored tensor wall plain line display width = %d, want <= %d:\n%s", got, model.width, view)
 		}
 	}
 }
@@ -404,6 +415,122 @@ func TestRenderTensorWallUsesSortOrder(t *testing.T) {
 	if first == -1 || second == -1 || third == -1 || !(first < second && second < third) {
 		t.Fatalf("tensor wall GPU order not sorted by util in:\n%s", view)
 	}
+}
+
+func assertPlainLineColored(t *testing.T, view, plainContains string) {
+	t.Helper()
+	line := lineByPlainContains(t, view, plainContains)
+	if !strings.Contains(line, "\x1b[") {
+		t.Fatalf("line containing %q is not colored:\nline: %q\nview:\n%s", plainContains, line, view)
+	}
+	if plain := stripANSI(line); !strings.Contains(plain, plainContains) {
+		t.Fatalf("stripped colored line = %q, want text containing %q", plain, plainContains)
+	}
+}
+
+func lineByPlainContains(t *testing.T, view, plainContains string) string {
+	t.Helper()
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(stripANSI(line), plainContains) {
+			return line
+		}
+	}
+	t.Fatalf("view missing line containing %q after stripping ANSI:\n%s", plainContains, view)
+	return ""
+}
+
+func lineByPlainEqual(t *testing.T, view, plain string) string {
+	t.Helper()
+	for _, line := range strings.Split(view, "\n") {
+		if stripANSI(line) == plain {
+			return line
+		}
+	}
+	t.Fatalf("view missing line equal to %q after stripping ANSI:\n%s", plain, view)
+	return ""
+}
+
+func assertColoredSegmentOccurrence(t *testing.T, line, segment string, occurrence int) {
+	t.Helper()
+	plainRunes, styled := styledPlainRunes(line)
+	segmentRunes := []rune(segment)
+	start := nthRuneOccurrence(plainRunes, segmentRunes, occurrence)
+	if start < 0 {
+		t.Fatalf("line %q missing occurrence %d of segment %q after stripping ANSI", stripANSI(line), occurrence, segment)
+	}
+	for i, r := range segmentRunes {
+		if r == ' ' || r == '\t' {
+			continue
+		}
+		if !styled[start+i] {
+			t.Fatalf("segment occurrence %d of %q is not fully colored:\nrendered: %q\nplain:    %q", occurrence, segment, line, stripANSI(line))
+		}
+	}
+}
+
+func styledPlainRunes(value string) ([]rune, []bool) {
+	plain := make([]rune, 0, utf8.RuneCountInString(value))
+	styled := make([]bool, 0, utf8.RuneCountInString(value))
+	active := false
+	for i := 0; i < len(value); {
+		if value[i] == '\x1b' && i+1 < len(value) && value[i+1] == '[' {
+			i += 2
+			start := i
+			for i < len(value) && (value[i] < '@' || value[i] > '~') {
+				i++
+			}
+			if i < len(value) {
+				if value[i] == 'm' {
+					active = sgrActiveAfter(active, value[start:i])
+				}
+				i++
+			}
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(value[i:])
+		plain = append(plain, r)
+		styled = append(styled, active)
+		i += size
+	}
+	return plain, styled
+}
+
+func sgrActiveAfter(active bool, params string) bool {
+	if params == "" {
+		return false
+	}
+	for _, param := range strings.Split(params, ";") {
+		switch param {
+		case "", "0":
+			active = false
+		default:
+			active = true
+		}
+	}
+	return active
+}
+
+func nthRuneOccurrence(value, segment []rune, occurrence int) int {
+	if occurrence <= 0 || len(segment) == 0 || len(segment) > len(value) {
+		return -1
+	}
+	seen := 0
+	for i := 0; i <= len(value)-len(segment); i++ {
+		match := true
+		for j := range segment {
+			if value[i+j] != segment[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			seen++
+			if seen == occurrence {
+				return i
+			}
+		}
+	}
+	return -1
 }
 
 func stripANSI(value string) string {

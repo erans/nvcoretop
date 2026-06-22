@@ -70,26 +70,22 @@ func renderTensorGPUBlockStyled(device gpu.DeviceSample, source gpu.Source, widt
 	name := truncateRunes(device.Name, tensorNameWidth(width))
 	tensorText := tensorMetricSummary("Tensor Pipe", device.TensorActivePct)
 	dramText := tensorMetricSummary("DRAM", device.MemPipeActivePct)
-	headerRaw := truncateRunes(fmt.Sprintf("GPU %d %s  %s  %s",
-		device.Index,
-		name,
-		tensorText,
-		dramText,
-	), width)
-	header := styleLineSegments(headerRaw, []styledSegment{
+	header := renderBoundedStyledLine([]styledLinePart{
+		{text: fmt.Sprintf("GPU %d %s  ", device.Index, name)},
 		{
 			text: tensorText,
 			render: func(text string) string {
 				return styleActivityText(text, device.TensorActivePct, st, noColor)
 			},
 		},
+		{text: "  "},
 		{
 			text: dramText,
 			render: func(text string) string {
 				return styleActivityText(text, device.MemPipeActivePct, st, noColor)
 			},
 		},
-	}, noColor)
+	}, width, noColor)
 
 	smText := percentFloatText(device.SMActivePct)
 	fp32Text := percentFloatText(device.FP32ActivePct)
@@ -97,43 +93,47 @@ func renderTensorGPUBlockStyled(device gpu.DeviceSample, source gpu.Source, widt
 	memText := memCell(device)
 	tempText := tempCell(device)
 	sourceText := source.String()
-	contextRaw := truncateRunes(fmt.Sprintf("  SM %s  FP32 %s  util %s  mem %s  temp %s  source %s",
-		smText,
-		fp32Text,
-		utilText,
-		memText,
-		tempText,
-		sourceText,
-	), width)
-	context := styleLineSegments(contextRaw, []styledSegment{
+	context := renderBoundedStyledLine([]styledLinePart{
+		{text: "  "},
 		{text: "SM", render: func(text string) string { return styleMuted(text, st, noColor) }},
+		{text: " "},
 		{
 			text: smText,
 			render: func(text string) string {
 				return styleActivityText(text, device.SMActivePct, st, noColor)
 			},
 		},
+		{text: "  "},
 		{text: "FP32", render: func(text string) string { return styleMuted(text, st, noColor) }},
+		{text: " "},
 		{
 			text: fp32Text,
 			render: func(text string) string {
 				return styleActivityText(text, device.FP32ActivePct, st, noColor)
 			},
 		},
+		{text: "  "},
 		{text: "util", render: func(text string) string { return styleMuted(text, st, noColor) }},
+		{text: " "},
 		{
 			text: utilText,
 			render: func(text string) string {
 				return st.optionalActivity(percentFloat(device.GPUUtil), device.GPUUtil.OK).Render(text)
 			},
 		},
+		{text: "  "},
 		{text: "mem", render: func(text string) string { return styleMuted(text, st, noColor) }},
+		{text: " "},
 		{text: memText, render: func(text string) string { return styleMuted(text, st, noColor) }},
+		{text: "  "},
 		{text: "temp", render: func(text string) string { return styleMuted(text, st, noColor) }},
+		{text: " "},
 		{text: tempText, render: func(text string) string { return styleMuted(text, st, noColor) }},
+		{text: "  "},
 		{text: "source", render: func(text string) string { return styleMuted(text, st, noColor) }},
+		{text: " "},
 		{text: sourceText, render: func(text string) string { return styleMuted(text, st, noColor) }},
-	}, noColor)
+	}, width, noColor)
 	lines := []string{header, context}
 	lines = appendActivityHeatmap(lines, "Tensor Pipe", device.TensorActivePct, width, heatWidth, heatHeight, st, noColor)
 	lines = appendActivityHeatmap(lines, "DRAM", device.MemPipeActivePct, width, heatWidth, heatHeight, st, noColor)
@@ -142,19 +142,21 @@ func renderTensorGPUBlockStyled(device gpu.DeviceSample, source gpu.Source, widt
 
 func appendActivityHeatmap(lines []string, label string, value gpu.Optional[float64], width, heatWidth, heatHeight int, st palette, noColor bool) []string {
 	if !value.OK {
-		lineRaw := truncateRunes(fmt.Sprintf("  %s unavailable (DCGM field missing)", label), width)
-		line := styleLineSegments(lineRaw, []styledSegment{
+		line := renderBoundedStyledLine([]styledLinePart{
+			{text: "  "},
 			{text: label, render: func(text string) string { return styleMuted(text, st, noColor) }},
+			{text: " "},
 			{text: "unavailable (DCGM field missing)", render: func(text string) string { return styleMuted(text, st, noColor) }},
-		}, noColor)
+		}, width, noColor)
 		return append(lines, line)
 	}
 	percent := tensorPercentText(value)
-	summaryRaw := truncateRunes(fmt.Sprintf("  %s %s", label, percent), width)
-	summary := styleLineSegments(summaryRaw, []styledSegment{
+	summary := renderBoundedStyledLine([]styledLinePart{
+		{text: "  "},
 		{text: label, render: func(text string) string { return styleMuted(text, st, noColor) }},
+		{text: " "},
 		{text: percent, render: func(text string) string { return styleActivityText(text, value, st, noColor) }},
-	}, noColor)
+	}, width, noColor)
 	lines = append(lines, summary)
 	for _, row := range tensorHeatmapRows(value, heatWidth, heatHeight) {
 		line := truncateRunes("  "+row, width)
@@ -249,31 +251,46 @@ func tensorPercentText(value gpu.Optional[float64]) string {
 	return fmt.Sprintf("%.0f%%", clampFloat(value.Value, 0, 100))
 }
 
-type styledSegment struct {
+type styledLinePart struct {
 	text   string
-	render func(string) string
+	render func(text string) string
 }
 
-func styleLineSegments(line string, segments []styledSegment, noColor bool) string {
+func renderBoundedStyledLine(parts []styledLinePart, width int, noColor bool) string {
+	var raw strings.Builder
+	for _, part := range parts {
+		raw.WriteString(part.text)
+	}
+	bounded := truncateRunes(raw.String(), width)
 	if noColor {
-		return line
+		return bounded
 	}
+
+	prefix := bounded
+	ellipsis := ""
+	if width > 3 && bounded != raw.String() && strings.HasSuffix(bounded, "...") {
+		prefix = strings.TrimSuffix(bounded, "...")
+		ellipsis = "..."
+	}
+
 	var builder strings.Builder
-	offset := 0
-	for _, segment := range segments {
-		if segment.text == "" {
-			continue
+	remaining := len(prefix)
+	for _, part := range parts {
+		if remaining <= 0 {
+			break
 		}
-		index := strings.Index(line[offset:], segment.text)
-		if index < 0 {
-			continue
+		text := part.text
+		if len(text) > remaining {
+			text = text[:remaining]
 		}
-		start := offset + index
-		builder.WriteString(line[offset:start])
-		builder.WriteString(segment.render(segment.text))
-		offset = start + len(segment.text)
+		if part.render == nil {
+			builder.WriteString(text)
+		} else {
+			builder.WriteString(part.render(text))
+		}
+		remaining -= len(text)
 	}
-	builder.WriteString(line[offset:])
+	builder.WriteString(ellipsis)
 	return builder.String()
 }
 
@@ -297,15 +314,36 @@ func styleHeatmapRow(row string, value gpu.Optional[float64], st palette) string
 		cellStyle = st.activity(optionalFloatPercent(value))
 	}
 	var builder strings.Builder
+	var run strings.Builder
+	runKind := 0
+	flush := func() {
+		if run.Len() == 0 {
+			return
+		}
+		switch runKind {
+		case 1:
+			builder.WriteString(cellStyle.Render(run.String()))
+		case 2:
+			builder.WriteString(st.muted.Render(run.String()))
+		default:
+			builder.WriteString(run.String())
+		}
+		run.Reset()
+	}
 	for _, r := range row {
+		kind := 0
 		switch r {
 		case '█':
-			builder.WriteString(cellStyle.Render(string(r)))
+			kind = 1
 		case '░':
-			builder.WriteString(st.muted.Render(string(r)))
-		default:
-			builder.WriteRune(r)
+			kind = 2
 		}
+		if kind != runKind {
+			flush()
+			runKind = kind
+		}
+		run.WriteRune(r)
 	}
+	flush()
 	return builder.String()
 }

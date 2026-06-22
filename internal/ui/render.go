@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"nvcoretop/internal/gpu"
 )
 
@@ -272,14 +274,27 @@ func truncateRunes(value string, width int) string {
 	if width <= 0 {
 		return value
 	}
-	runes := []rune(value)
-	if len(runes) <= width {
+	if lipgloss.Width(value) <= width {
 		return value
 	}
 	if width <= 3 {
-		return string(runes[:width])
+		return truncateDisplayWidth(value, width)
 	}
-	return string(runes[:width-3]) + "..."
+	return truncateDisplayWidth(value, width-3) + "..."
+}
+
+func truncateDisplayWidth(value string, width int) string {
+	var builder strings.Builder
+	used := 0
+	for _, r := range value {
+		runeWidth := lipgloss.Width(string(r))
+		if used+runeWidth > width {
+			break
+		}
+		builder.WriteRune(r)
+		used += runeWidth
+	}
+	return builder.String()
 }
 
 func truncateLines(value string, width int) string {
