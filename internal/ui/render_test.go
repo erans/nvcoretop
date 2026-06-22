@@ -200,6 +200,21 @@ func TestRenderTensorWallLineWidthBoundedNoColor(t *testing.T) {
 	}
 }
 
+func TestRenderTensorWallFooterHelpWidthBoundedNoColor(t *testing.T) {
+	model := NewModel(Options{NoColor: true, Interval: "250 milliseconds"})
+	model, _ = updateModel(model, SnapshotMsg(snapshotWithTensorActivity()))
+	model, _ = updateModel(model, tea.WindowSizeMsg{Width: 36, Height: 18})
+	model, _ = updateModel(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	model, _ = updateModel(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+
+	view := model.View()
+	for _, line := range strings.Split(view, "\n") {
+		if got := utf8.RuneCountInString(line); got > model.width {
+			t.Fatalf("tensor wall line length = %d, want <= %d:\n%s", got, model.width, view)
+		}
+	}
+}
+
 func TestRenderTensorWallLineBudgetPreservesFooterHelpAndOverflow(t *testing.T) {
 	model := NewModel(Options{NoColor: true, Interval: "500ms"})
 	snapshot := snapshotWithDevices(10)

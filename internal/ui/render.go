@@ -13,13 +13,17 @@ func (m Model) View() string {
 	var parts []string
 	degraded := m.width > 0 && m.width < degradedWidth
 	if m.err != nil {
-		parts = append(parts, "error: "+m.err.Error())
+		errText := "error: " + m.err.Error()
+		if m.view == viewTensorWall {
+			errText = truncateRunes(errText, m.width)
+		}
+		parts = append(parts, errText)
 	}
 	if m.view == viewTensorWall {
-		footer := m.renderFooter()
+		footer := truncateRunes(m.renderFooter(), m.width)
 		help := ""
 		if m.help {
-			help = "keys: t overview | o overview | s sort | p pause | ? help | q quit"
+			help = truncateRunes("keys: t overview | o overview | s sort | p pause | ? help | q quit", m.width)
 		}
 		bodyBudget := -1
 		if m.height > 0 {
