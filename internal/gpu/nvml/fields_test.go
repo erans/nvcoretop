@@ -1,6 +1,7 @@
 package nvml
 
 import (
+	"encoding/binary"
 	"testing"
 	"time"
 
@@ -83,7 +84,7 @@ func TestSampleDeviceMapsSupportedFields(t *testing.T) {
 		},
 	}
 
-	got := sampleDevice(0, device, func(uint32) string { return "python" }, nil)
+	got := sampleDevice(0, device, func(uint32) string { return "python" })
 	if got.Index != 0 || got.Name != "RTX 3090" || got.UUID != "GPU-test" {
 		t.Fatalf("identity = %#v", got)
 	}
@@ -122,7 +123,7 @@ func TestSampleDeviceMarksPermissionLimitedProcesses(t *testing.T) {
 		return nil, nvidia.ERROR_NO_PERMISSION
 	}
 
-	got := sampleDevice(0, device, func(uint32) string { return "" }, nil)
+	got := sampleDevice(0, device, func(uint32) string { return "" })
 	if !got.ProcessLimited {
 		t.Fatalf("ProcessLimited = false, want true")
 	}
@@ -134,7 +135,7 @@ func TestUnsupportedFieldsStayMissing(t *testing.T) {
 		return 0, nvidia.ERROR_NOT_SUPPORTED
 	}
 
-	got := sampleDevice(0, device, func(uint32) string { return "" }, nil)
+	got := sampleDevice(0, device, func(uint32) string { return "" })
 	if got.TempC.OK {
 		t.Fatalf("TempC = %#v, want missing", got.TempC)
 	}
@@ -196,6 +197,138 @@ func TestApplyNVLinkDeltaSkipsInvalidDeltas(t *testing.T) {
 	}
 }
 
+func TestReadNVLinkTotalsUsesFieldValuesForEnabledLinks(t *testing.T) {
+	device := minimalMockDevice()
+	enabledLinks := map[int]struct {
+		tx uint64
+		rx uint64
+	}{
+		1: {tx: 1024, rx: 2048},
+		3: {tx: 3072, rx: 4096},
+	}
+	device.GetNvLinkStateFunc = func(link int) (nvidia.EnableState, nvidia.Return) {
+		if _, ok := enabledLinks[link]; ok {
+			return nvidia.FEATURE_ENABLED, nvidia.SUCCESS
+		}
+		return nvidia.FEATURE_DISABLED, nvidia.SUCCESS
+	}
+	var requests [][]nvidia.FieldValue
+	device.GetFieldValuesFunc = func(values []nvidia.FieldValue) nvidia.Return {
+		requests = append(requests, append([]nvidia.FieldValue(nil), values...))
+		if len(values) != 2 {
+			t.Fatalf("field value count = %d, want 2", len(values))
+		}
+		link := int(values[0].ScopeId)
+		counters, ok := enabledLinks[link]
+		if !ok {
+			t.Fatalf("field values requested for disabled link %d", link)
+		}
+		setUnsignedFieldValue(&values[0], counters.tx, nvidia.SUCCESS)
+		setUnsignedFieldValue(&values[1], counters.rx, nvidia.SUCCESS)
+		return nvidia.SUCCESS
+	}
+
+	totals, found := readNVLinkTotals(device, time.Unix(20, 0))
+
+	if !found {
+		t.Fatalf("found = false, want true")
+	}
+	if totals.tx != 4096 || totals.rx != 6144 {
+		t.Fatalf("totals = tx %d rx %d, want tx 4096 rx 6144", totals.tx, totals.rx)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("field value request count = %d, want 2", len(requests))
+	}
+	assertNVLinkFieldRequest(t, requests[0], 1)
+	assertNVLinkFieldRequest(t, requests[1], 3)
+}
+
+func TestReadNVLinkTotalsRejectsPartialFieldFailures(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func([]nvidia.FieldValue) nvidia.Return
+	}{
+		{
+			name: "field values call fails",
+			mutate: func([]nvidia.FieldValue) nvidia.Return {
+				return nvidia.ERROR_UNKNOWN
+			},
+		},
+		{
+			name: "tx field fails",
+			mutate: func(values []nvidia.FieldValue) nvidia.Return {
+				setUnsignedFieldValue(&values[0], 1024, nvidia.ERROR_UNKNOWN)
+				setUnsignedFieldValue(&values[1], 2048, nvidia.SUCCESS)
+				return nvidia.SUCCESS
+			},
+		},
+		{
+			name: "rx field has unsupported value type",
+			mutate: func(values []nvidia.FieldValue) nvidia.Return {
+				setUnsignedFieldValue(&values[0], 1024, nvidia.SUCCESS)
+				setUnsignedFieldValue(&values[1], 2048, nvidia.SUCCESS)
+				values[1].ValueType = uint32(nvidia.VALUE_TYPE_SIGNED_INT)
+				return nvidia.SUCCESS
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			device := minimalMockDevice()
+			device.GetNvLinkStateFunc = func(link int) (nvidia.EnableState, nvidia.Return) {
+				if link == 0 {
+					return nvidia.FEATURE_ENABLED, nvidia.SUCCESS
+				}
+				return nvidia.FEATURE_DISABLED, nvidia.SUCCESS
+			}
+			device.GetFieldValuesFunc = tt.mutate
+
+			totals, found := readNVLinkTotals(device, time.Unix(20, 0))
+
+			if found {
+				t.Fatalf("found = true, want false with totals %#v", totals)
+			}
+		})
+	}
+}
+
+func TestReadNVLinkTotalsIncludesMaxNVLinkBoundary(t *testing.T) {
+	lastLink := nvidia.NVLINK_MAX_LINKS - 1
+	device := minimalMockDevice()
+	var stateCalls []int
+	device.GetNvLinkStateFunc = func(link int) (nvidia.EnableState, nvidia.Return) {
+		stateCalls = append(stateCalls, link)
+		if link == lastLink {
+			return nvidia.FEATURE_ENABLED, nvidia.SUCCESS
+		}
+		return nvidia.FEATURE_DISABLED, nvidia.SUCCESS
+	}
+	var request []nvidia.FieldValue
+	device.GetFieldValuesFunc = func(values []nvidia.FieldValue) nvidia.Return {
+		request = append([]nvidia.FieldValue(nil), values...)
+		setUnsignedFieldValue(&values[0], 1024, nvidia.SUCCESS)
+		setUnsignedFieldValue(&values[1], 2048, nvidia.SUCCESS)
+		return nvidia.SUCCESS
+	}
+
+	totals, found := readNVLinkTotals(device, time.Unix(20, 0))
+
+	if !found {
+		t.Fatalf("found = false, want true")
+	}
+	if totals.tx != 1024 || totals.rx != 2048 {
+		t.Fatalf("totals = tx %d rx %d, want tx 1024 rx 2048", totals.tx, totals.rx)
+	}
+	if len(stateCalls) != nvidia.NVLINK_MAX_LINKS {
+		t.Fatalf("state call count = %d, want %d", len(stateCalls), nvidia.NVLINK_MAX_LINKS)
+	}
+	if stateCalls[len(stateCalls)-1] != lastLink {
+		t.Fatalf("last state call = %d, want %d", stateCalls[len(stateCalls)-1], lastLink)
+	}
+	assertNVLinkFieldRequest(t, request, lastLink)
+}
+
 func minimalMockDevice() *mock.Device {
 	return &mock.Device{
 		GetNameFunc:             func() (string, nvidia.Return) { return "GPU", nvidia.SUCCESS },
@@ -225,6 +358,25 @@ func minimalMockDevice() *mock.Device {
 			return nvidia.FEATURE_DISABLED, nvidia.SUCCESS
 		},
 	}
+}
+
+func assertNVLinkFieldRequest(t *testing.T, got []nvidia.FieldValue, link int) {
+	t.Helper()
+	if len(got) != 2 {
+		t.Fatalf("field value count = %d, want 2", len(got))
+	}
+	if got[0].FieldId != nvidia.FI_DEV_NVLINK_COUNT_XMIT_BYTES || got[0].ScopeId != uint32(link) {
+		t.Fatalf("tx field request = %#v, want field %d scope %d", got[0], nvidia.FI_DEV_NVLINK_COUNT_XMIT_BYTES, link)
+	}
+	if got[1].FieldId != nvidia.FI_DEV_NVLINK_COUNT_RCV_BYTES || got[1].ScopeId != uint32(link) {
+		t.Fatalf("rx field request = %#v, want field %d scope %d", got[1], nvidia.FI_DEV_NVLINK_COUNT_RCV_BYTES, link)
+	}
+}
+
+func setUnsignedFieldValue(value *nvidia.FieldValue, counter uint64, ret nvidia.Return) {
+	value.ValueType = uint32(nvidia.VALUE_TYPE_UNSIGNED_LONG_LONG)
+	value.NvmlReturn = uint32(ret)
+	binary.LittleEndian.PutUint64(value.Value[:], counter)
 }
 
 func assertOptional[T comparable](t *testing.T, name string, got gpu.Optional[T], want T) {

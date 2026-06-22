@@ -189,26 +189,10 @@ func TestSampleReturnsContextErrorBeforeSampling(t *testing.T) {
 }
 
 func TestSampleComputesNVLinkThroughputAfterFirstTotals(t *testing.T) {
-	device := minimalMockDevice()
-	device.GetNvLinkStateFunc = func(link int) (nvidia.EnableState, nvidia.Return) {
-		if link == 0 {
-			return nvidia.FEATURE_ENABLED, nvidia.SUCCESS
-		}
-		return nvidia.FEATURE_DISABLED, nvidia.SUCCESS
-	}
-
-	counterCalls := 0
-	device.GetNvLinkUtilizationCounterFunc = func(link int, counter int) (uint64, uint64, nvidia.Return) {
-		if link != 0 || counter != 0 {
-			t.Fatalf("NVLink counter = link %d counter %d, want link 0 counter 0", link, counter)
-		}
-		counterCalls++
-		if counterCalls == 1 {
-			return 2048, 1024, nvidia.SUCCESS
-		}
-		return 6144, 3072, nvidia.SUCCESS
-	}
-
+	device := sequentialNVLinkDevice(t, []nvlinkFieldResult{
+		{tx: 1024, rx: 2048},
+		{tx: 3072, rx: 6144},
+	})
 	timestamps := []time.Time{time.Unix(10, 0), time.Unix(12, 0)}
 	nowCalls := 0
 	installFakeNVML(t, &fakeNVML{count: 1, handles: []nvidia.Device{device}})
@@ -241,6 +225,90 @@ func TestSampleComputesNVLinkThroughputAfterFirstTotals(t *testing.T) {
 	}
 	assertOptional(t, "NVLinkTxKBps", second.Devices[0].NVLinkTxKBps, uint64(1))
 	assertOptional(t, "NVLinkRxKBps", second.Devices[0].NVLinkRxKBps, uint64(2))
+}
+
+func TestSampleSkipsInvalidNVLinkTotalsWithoutUpdatingBaseline(t *testing.T) {
+	device := sequentialNVLinkDevice(t, []nvlinkFieldResult{
+		{tx: 0, rx: 0},
+		{tx: 4096, rx: 0, rxRet: nvidia.ERROR_UNKNOWN},
+		{tx: 4096, rx: 8192},
+	})
+	timestamps := []time.Time{time.Unix(10, 0), time.Unix(12, 0), time.Unix(14, 0)}
+	nowCalls := 0
+	installFakeNVML(t, &fakeNVML{count: 1, handles: []nvidia.Device{device}})
+	sampler, err := New(Options{
+		Now: func() time.Time {
+			if nowCalls >= len(timestamps) {
+				t.Fatalf("unexpected Now call %d", nowCalls+1)
+			}
+			at := timestamps[nowCalls]
+			nowCalls++
+			return at
+		},
+	})
+	if err != nil {
+		t.Fatalf("New error = %v", err)
+	}
+	defer sampler.Close()
+
+	first, err := sampler.Sample(context.Background())
+	if err != nil {
+		t.Fatalf("first Sample error = %v", err)
+	}
+	if first.Devices[0].NVLinkTxKBps.OK || first.Devices[0].NVLinkRxKBps.OK {
+		t.Fatalf("first NVLink throughput = tx %#v rx %#v, want missing", first.Devices[0].NVLinkTxKBps, first.Devices[0].NVLinkRxKBps)
+	}
+
+	second, err := sampler.Sample(context.Background())
+	if err != nil {
+		t.Fatalf("second Sample error = %v", err)
+	}
+	if second.Devices[0].NVLinkTxKBps.OK || second.Devices[0].NVLinkRxKBps.OK {
+		t.Fatalf("second NVLink throughput = tx %#v rx %#v, want missing", second.Devices[0].NVLinkTxKBps, second.Devices[0].NVLinkRxKBps)
+	}
+
+	third, err := sampler.Sample(context.Background())
+	if err != nil {
+		t.Fatalf("third Sample error = %v", err)
+	}
+	assertOptional(t, "NVLinkTxKBps", third.Devices[0].NVLinkTxKBps, uint64(1))
+	assertOptional(t, "NVLinkRxKBps", third.Devices[0].NVLinkRxKBps, uint64(2))
+}
+
+type nvlinkFieldResult struct {
+	tx      uint64
+	rx      uint64
+	txRet   nvidia.Return
+	rxRet   nvidia.Return
+	callRet nvidia.Return
+}
+
+func sequentialNVLinkDevice(t *testing.T, results []nvlinkFieldResult) *mock.Device {
+	t.Helper()
+	device := minimalMockDevice()
+	device.GetNvLinkStateFunc = func(link int) (nvidia.EnableState, nvidia.Return) {
+		if link == 0 {
+			return nvidia.FEATURE_ENABLED, nvidia.SUCCESS
+		}
+		return nvidia.FEATURE_DISABLED, nvidia.SUCCESS
+	}
+
+	call := 0
+	device.GetFieldValuesFunc = func(values []nvidia.FieldValue) nvidia.Return {
+		if call >= len(results) {
+			t.Fatalf("unexpected GetFieldValues call %d", call+1)
+		}
+		result := results[call]
+		call++
+		assertNVLinkFieldRequest(t, values, 0)
+		if result.callRet != nvidia.SUCCESS {
+			return result.callRet
+		}
+		setUnsignedFieldValue(&values[0], result.tx, result.txRet)
+		setUnsignedFieldValue(&values[1], result.rx, result.rxRet)
+		return nvidia.SUCCESS
+	}
+	return device
 }
 
 type fakeNVML struct {

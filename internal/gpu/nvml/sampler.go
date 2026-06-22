@@ -74,7 +74,7 @@ func (s *Sampler) Sample(ctx context.Context) (gpu.Snapshot, error) {
 		Devices:   make([]gpu.DeviceSample, 0, len(s.devices)),
 	}
 	for index, device := range s.devices {
-		deviceSample := sampleDevice(index, device, processNameFromProc, nil)
+		deviceSample := sampleDevice(index, device, processNameFromProc)
 		if totals, found := readNVLinkTotals(device, snapshot.Timestamp); found {
 			if previous, ok := s.lastNVLink[index]; ok {
 				applyNVLinkDelta(&deviceSample, previous, totals)

@@ -1,6 +1,7 @@
 package nvml
 
 import (
+	"encoding/binary"
 	"os"
 	"strconv"
 	"strings"
@@ -10,15 +11,13 @@ import (
 	"nvcoretop/internal/gpu"
 )
 
-const maxNVLinks = 12
-
 type nvlinkTotals struct {
 	at time.Time
 	tx uint64
 	rx uint64
 }
 
-func sampleDevice(index int, device nvidia.Device, processName func(uint32) string, previous *nvlinkTotals) gpu.DeviceSample {
+func sampleDevice(index int, device nvidia.Device, processName func(uint32) string) gpu.DeviceSample {
 	sample := gpu.DeviceSample{Index: index}
 
 	if name, ret := device.GetName(); ok(ret) {
@@ -113,20 +112,49 @@ func mapThrottleReasons(bits uint64) gpu.ThrottleReasons {
 func readNVLinkTotals(device nvidia.Device, at time.Time) (nvlinkTotals, bool) {
 	totals := nvlinkTotals{at: at}
 	found := false
-	for link := 0; link < maxNVLinks; link++ {
+	for link := 0; link < nvidia.NVLINK_MAX_LINKS; link++ {
 		state, ret := device.GetNvLinkState(link)
 		if !ok(ret) || state != nvidia.FEATURE_ENABLED {
 			continue
 		}
-		rx, tx, ret := device.GetNvLinkUtilizationCounter(link, 0)
-		if !ok(ret) {
-			continue
+
+		values := []nvidia.FieldValue{
+			{FieldId: nvidia.FI_DEV_NVLINK_COUNT_XMIT_BYTES, ScopeId: uint32(link)},
+			{FieldId: nvidia.FI_DEV_NVLINK_COUNT_RCV_BYTES, ScopeId: uint32(link)},
 		}
-		totals.rx += rx
+		if ret := device.GetFieldValues(values); !ok(ret) {
+			return nvlinkTotals{}, false
+		}
+		tx, ok := unsignedFieldValue(values[0])
+		if !ok {
+			return nvlinkTotals{}, false
+		}
+		rx, ok := unsignedFieldValue(values[1])
+		if !ok {
+			return nvlinkTotals{}, false
+		}
 		totals.tx += tx
+		totals.rx += rx
 		found = true
 	}
 	return totals, found
+}
+
+func unsignedFieldValue(value nvidia.FieldValue) (uint64, bool) {
+	if !ok(nvidia.Return(value.NvmlReturn)) {
+		return 0, false
+	}
+
+	switch nvidia.ValueType(value.ValueType) {
+	case nvidia.VALUE_TYPE_UNSIGNED_SHORT:
+		return uint64(binary.LittleEndian.Uint16(value.Value[:])), true
+	case nvidia.VALUE_TYPE_UNSIGNED_INT:
+		return uint64(binary.LittleEndian.Uint32(value.Value[:])), true
+	case nvidia.VALUE_TYPE_UNSIGNED_LONG, nvidia.VALUE_TYPE_UNSIGNED_LONG_LONG:
+		return binary.LittleEndian.Uint64(value.Value[:]), true
+	default:
+		return 0, false
+	}
 }
 
 func applyNVLinkDelta(sample *gpu.DeviceSample, previous, current nvlinkTotals) {
