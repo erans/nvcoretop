@@ -2,26 +2,62 @@ package ui
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"nvcoretop/internal/gpu"
 )
 
+const (
+	coreTileWidth  = 12
+	coreTileHeight = 2
+)
+
 func CoresView(device gpu.DeviceSample, preferDCGM bool) string {
 	if preferDCGM && device.SMActivePct.OK {
-		lines := []string{
-			activityBar("SM", device.SMActivePct),
-			activityBar("Tensor", device.TensorActivePct),
-			activityBar("MemPipe", device.MemPipeActivePct),
-			activityBar("FP32", device.FP32ActivePct),
-		}
+		leftTop := activityTile("SM", device.SMActivePct)
+		rightTop := activityTile("Tensor", device.TensorActivePct)
+		leftBottom := activityTile("MemPipe", device.MemPipeActivePct)
+		rightBottom := activityTile("FP32", device.FP32ActivePct)
+
+		lines := []string{"Core Activity"}
+		lines = append(lines, combineTiles(leftTop, rightTop)...)
+		lines = append(lines, combineTiles(leftBottom, rightBottom)...)
 		return strings.Join(lines, "\n")
 	}
 	return fmt.Sprintf("cores %s %s", percentText(device.GPUUtil), bar(percentFloat(device.GPUUtil), 12))
 }
 
-func activityBar(label string, value gpu.Optional[float64]) string {
-	return fmt.Sprintf("%-7s %6s %s", label, percentFloatText(value), bar(optionalFloatPercent(value), 16))
+func activityTile(label string, value gpu.Optional[float64]) []string {
+	lines := []string{fmt.Sprintf("%s %s", label, percentFloatText(value))}
+	for range coreTileHeight {
+		lines = append(lines, tileRow(value))
+	}
+	return lines
+}
+
+func combineTiles(left, right []string) []string {
+	lines := make([]string, 0, len(left))
+	for i := range left {
+		lines = append(lines, fmt.Sprintf("%-*s  %s", coreTileWidth, left[i], right[i]))
+	}
+	return lines
+}
+
+func tileRow(value gpu.Optional[float64]) string {
+	filled := 0
+	if value.OK {
+		percent := optionalFloatPercent(value)
+		filled = int(math.Round((percent / 100) * float64(coreTileWidth)))
+		if filled < 0 {
+			filled = 0
+		}
+		if filled > coreTileWidth {
+			filled = coreTileWidth
+		}
+	}
+	empty := coreTileWidth - filled
+	return strings.Repeat("█", filled) + strings.Repeat("░", empty)
 }
 
 func bar(percent float64, width int) string {

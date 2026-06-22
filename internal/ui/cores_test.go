@@ -14,16 +14,44 @@ func TestCoresGridUsesGPUUtilFallback(t *testing.T) {
 	}
 }
 
-func TestCoresViewUsesDCGMActivity(t *testing.T) {
+func TestCoresViewUsesDCGMTileBlocks(t *testing.T) {
 	got := CoresView(gpu.DeviceSample{
-		SMActivePct:      gpu.Some(82.5),
-		TensorActivePct:  gpu.Some(12.0),
-		MemPipeActivePct: gpu.Some(44.0),
-		FP32ActivePct:    gpu.Some(65.0),
+		SMActivePct:      gpu.Some(83.0),
+		TensorActivePct:  gpu.Some(42.0),
+		MemPipeActivePct: gpu.Some(58.0),
+		FP32ActivePct:    gpu.Some(16.0),
 	}, true)
-	for _, want := range []string{"SM", "Tensor", "MemPipe", "FP32"} {
+
+	for _, want := range []string{
+		"Core Activity",
+		"SM 83%",
+		"Tensor 42%",
+		"MemPipe 58%",
+		"FP32 16%",
+		"██████████░░  █████░░░░░░░",
+		"███████░░░░░  ██░░░░░░░░░░",
+	} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("CoresView DCGM = %q, missing %q", got, want)
+			t.Fatalf("CoresView DCGM tiles = %q, missing %q", got, want)
+		}
+	}
+}
+
+func TestCoresViewShowsMissingDCGMFieldsAsEmptyTiles(t *testing.T) {
+	got := CoresView(gpu.DeviceSample{
+		SMActivePct: gpu.Some(50.0),
+	}, true)
+
+	for _, want := range []string{
+		"SM 50%",
+		"Tensor n/a",
+		"MemPipe n/a",
+		"FP32 n/a",
+		"██████░░░░░░  ░░░░░░░░░░░░",
+		"░░░░░░░░░░░░  ░░░░░░░░░░░░",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("CoresView missing DCGM tiles = %q, missing %q", got, want)
 		}
 	}
 }
