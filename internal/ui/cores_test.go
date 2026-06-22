@@ -25,8 +25,8 @@ func TestCoresViewUsesDCGMTileBlocks(t *testing.T) {
 	for _, want := range []string{
 		"Core Activity",
 		"SM 83%",
-		"Tensor 42%",
-		"MemPipe 58%",
+		"Tensor Pipe 42%",
+		"DRAM 58%",
 		"FP32 16%",
 		"██████████░░  █████░░░░░░░",
 		"███████░░░░░  ██░░░░░░░░░░",
@@ -34,6 +34,9 @@ func TestCoresViewUsesDCGMTileBlocks(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("CoresView DCGM tiles = %q, missing %q", got, want)
 		}
+	}
+	if strings.Contains(got, "MemPipe") {
+		t.Fatalf("CoresView DCGM tiles should label field 1005 as DRAM, got %q", got)
 	}
 }
 
@@ -44,8 +47,8 @@ func TestCoresViewShowsMissingDCGMFieldsAsEmptyTiles(t *testing.T) {
 
 	for _, want := range []string{
 		"SM 50%",
-		"Tensor n/a",
-		"MemPipe n/a",
+		"Tensor Pipe n/a",
+		"DRAM n/a",
 		"FP32 n/a",
 		"██████░░░░░░  ░░░░░░░░░░░░",
 		"░░░░░░░░░░░░  ░░░░░░░░░░░░",
@@ -53,5 +56,8 @@ func TestCoresViewShowsMissingDCGMFieldsAsEmptyTiles(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("CoresView missing DCGM tiles = %q, missing %q", got, want)
 		}
+	}
+	if strings.Contains(got, "MemPipe") {
+		t.Fatalf("CoresView missing DCGM tiles should label field 1005 as DRAM, got %q", got)
 	}
 }

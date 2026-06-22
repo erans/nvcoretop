@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"nvcoretop/internal/gpu"
 )
 
@@ -11,9 +13,44 @@ const degradedWidth = 72
 
 func (m Model) View() string {
 	var parts []string
+	noColor := m.options.NoColor
+	st := styles(noColor)
 	degraded := m.width > 0 && m.width < degradedWidth
 	if m.err != nil {
-		parts = append(parts, "error: "+m.err.Error())
+		errText := "error: " + m.err.Error()
+		if m.view == viewTensorWall {
+			errText = truncateRunes(errText, m.width)
+			errText = styleMuted(errText, st, noColor)
+		}
+		parts = append(parts, errText)
+	}
+	if m.view == viewTensorWall {
+		footer := truncateRunes(m.renderFooterText(), m.width)
+		footer = styleMuted(footer, st, noColor)
+		help := ""
+		if m.help {
+			help = truncateRunes("keys: t toggle wall | o overview | s sort | p pause | ? help | q quit", m.width)
+			help = styleMuted(help, st, noColor)
+		}
+		bodyBudget := -1
+		if m.height > 0 {
+			bodyBudget = m.height - renderedLineCount(parts) - 1
+			if help != "" {
+				bodyBudget--
+			}
+			if bodyBudget < 0 {
+				bodyBudget = 0
+			}
+		}
+		body := m.renderTensorWall(bodyBudget)
+		if body != "" {
+			parts = append(parts, body)
+		}
+		parts = append(parts, footer)
+		if help != "" {
+			parts = append(parts, help)
+		}
+		return strings.Join(parts, "\n")
 	}
 	if degraded {
 		parts = append(parts, m.renderDegraded())
@@ -29,7 +66,7 @@ func (m Model) View() string {
 	}
 	parts = append(parts, m.renderFooter())
 	if m.help {
-		parts = append(parts, "keys: up/down/j/k select | enter/tab detail | s sort | d dcgm | p pause | ? help | q quit")
+		parts = append(parts, "keys: up/down/j/k select | enter/tab detail | s sort | d dcgm | t tensor wall | o overview | p pause | ? help | q quit")
 	}
 	return strings.Join(parts, "\n")
 }
@@ -46,11 +83,20 @@ func (m Model) selectedDevice() gpu.DeviceSample {
 }
 
 func (m Model) renderOverview() string {
-	lines := []string{" #  NAME        UTIL        MEM             TEMP   PWR        CORES"}
+	noColor := m.options.NoColor
+	st := styles(noColor)
+	header := " #  NAME        UTIL        MEM             TEMP   PWR        CORES"
+	if !noColor {
+		header = st.muted.Render(header)
+	}
+	lines := []string{header}
 	for row, device := range SortDevices(m.snapshot.Devices, m.sort) {
 		cursor := " "
 		if row == m.selected {
 			cursor = ">"
+			if !noColor {
+				cursor = st.ok.Render(cursor)
+			}
 		}
 		lines = append(lines, fmt.Sprintf("%s%2d  %-10.10s %-10s %-14s %-6s %-10s %s",
 			cursor,
@@ -119,11 +165,28 @@ func (m Model) renderDetail(device gpu.DeviceSample) string {
 }
 
 func (m Model) renderFooter() string {
-	status := "running"
-	if m.paused {
-		status = "paused"
+	st := styles(m.options.NoColor)
+	statusText := m.footerStatus()
+	status := statusText
+	if !m.options.NoColor {
+		if m.paused {
+			status = st.warn.Render(statusText)
+		} else {
+			status = st.ok.Render(statusText)
+		}
 	}
 	return fmt.Sprintf("%s | interval %s | sort %s | source %s", status, m.options.Interval, m.sort.String(), m.snapshot.Source.String())
+}
+
+func (m Model) renderFooterText() string {
+	return fmt.Sprintf("%s | interval %s | sort %s | source %s", m.footerStatus(), m.options.Interval, m.sort.String(), m.snapshot.Source.String())
+}
+
+func (m Model) footerStatus() string {
+	if m.paused {
+		return "paused"
+	}
+	return "running"
 }
 
 func utilCell(device gpu.DeviceSample) string {
@@ -211,14 +274,27 @@ func truncateRunes(value string, width int) string {
 	if width <= 0 {
 		return value
 	}
-	runes := []rune(value)
-	if len(runes) <= width {
+	if lipgloss.Width(value) <= width {
 		return value
 	}
 	if width <= 3 {
-		return string(runes[:width])
+		return truncateDisplayWidth(value, width)
 	}
-	return string(runes[:width-3]) + "..."
+	return truncateDisplayWidth(value, width-3) + "..."
+}
+
+func truncateDisplayWidth(value string, width int) string {
+	var builder strings.Builder
+	used := 0
+	for _, r := range value {
+		runeWidth := lipgloss.Width(string(r))
+		if used+runeWidth > width {
+			break
+		}
+		builder.WriteRune(r)
+		used += runeWidth
+	}
+	return builder.String()
 }
 
 func truncateLines(value string, width int) string {
@@ -227,4 +303,12 @@ func truncateLines(value string, width int) string {
 		lines[i] = truncateRunes(line, width)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func renderedLineCount(parts []string) int {
+	count := 0
+	for _, part := range parts {
+		count += len(strings.Split(part, "\n"))
+	}
+	return count
 }

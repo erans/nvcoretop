@@ -16,8 +16,8 @@ const (
 func CoresView(device gpu.DeviceSample, preferDCGM bool) string {
 	if preferDCGM && device.SMActivePct.OK {
 		leftTop := activityTile("SM", device.SMActivePct)
-		rightTop := activityTile("Tensor", device.TensorActivePct)
-		leftBottom := activityTile("MemPipe", device.MemPipeActivePct)
+		rightTop := activityTile("Tensor Pipe", device.TensorActivePct)
+		leftBottom := activityTile("DRAM", device.MemPipeActivePct)
 		rightBottom := activityTile("FP32", device.FP32ActivePct)
 
 		lines := []string{"Core Activity"}

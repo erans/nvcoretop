@@ -10,6 +10,7 @@
 /vendor/
 go.work
 go.work.sum
+.worktrees/
 
 # Editor / OS
 .DS_Store
