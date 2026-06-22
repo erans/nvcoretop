@@ -3,6 +3,7 @@ module nvcoretop
 go 1.24.0
 
 require (
+	github.com/NVIDIA/go-nvml v0.13.2-0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/exp/teatest v0.0.0-20260621010513-945fab64fd3e
