@@ -42,6 +42,7 @@ func NewModel(options Options) Model {
 	if window <= 0 {
 		window = defaultHistoryWindow
 	}
+	options.HistoryWindow = window
 	return Model{
 		history:  history.NewStore(window),
 		dcgmView: options.ForceDCGMView,
@@ -71,6 +72,7 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 	case SnapshotMsg:
 		m.snapshot = gpu.Snapshot(msg)
 		m.history.Add(m.snapshot)
+		m.err = nil
 		m.clampSelection()
 	case ErrMsg:
 		m.err = msg.Err

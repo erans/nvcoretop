@@ -1,12 +1,52 @@
 package ui
 
 import (
+	"errors"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"nvcoretop/internal/gpu"
 )
+
+func TestModelNewDefaults(t *testing.T) {
+	model := NewModel(Options{})
+
+	if model.options.HistoryWindow != defaultHistoryWindow {
+		t.Fatalf("options.HistoryWindow = %d, want %d", model.options.HistoryWindow, defaultHistoryWindow)
+	}
+	if model.sort != SortIndex {
+		t.Fatalf("sort = %v, want %v", model.sort, SortIndex)
+	}
+	if model.dcgmView {
+		t.Fatalf("dcgmView = true, want false")
+	}
+	if model.history == nil {
+		t.Fatalf("history = nil, want store")
+	}
+
+	for range defaultHistoryWindow + 1 {
+		model.history.Add(snapshotWithDevices(1))
+	}
+	history, ok := model.history.Device(0)
+	if !ok {
+		t.Fatalf("history missing device")
+	}
+	if got := len(history.Util.Values()); got != defaultHistoryWindow {
+		t.Fatalf("history window length = %d, want %d", got, defaultHistoryWindow)
+	}
+}
+
+func TestModelNewOptions(t *testing.T) {
+	model := NewModel(Options{HistoryWindow: 4, ForceDCGMView: true})
+
+	if model.options.HistoryWindow != 4 {
+		t.Fatalf("options.HistoryWindow = %d, want 4", model.options.HistoryWindow)
+	}
+	if !model.dcgmView {
+		t.Fatalf("dcgmView = false, want true")
+	}
+}
 
 func TestModelSelectionKeys(t *testing.T) {
 	model := NewModel(Options{})
@@ -42,6 +82,88 @@ func TestModelToggleKeys(t *testing.T) {
 	model, _ = updateModel(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
 	if !model.dcgmView {
 		t.Fatalf("dcgmView = false, want true")
+	}
+}
+
+func TestModelSortKeyCyclesSortMode(t *testing.T) {
+	model := NewModel(Options{})
+
+	model, _ = updateModel(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
+	if model.sort != SortUtil {
+		t.Fatalf("sort = %v, want %v", model.sort, SortUtil)
+	}
+}
+
+func TestModelQuitKeysReturnCommand(t *testing.T) {
+	tests := []struct {
+		name string
+		msg  tea.KeyMsg
+	}{
+		{
+			name: "q",
+			msg:  tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")},
+		},
+		{
+			name: "ctrl+c",
+			msg:  tea.KeyMsg{Type: tea.KeyCtrlC},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, cmd := updateModel(NewModel(Options{}), tt.msg)
+			if cmd == nil {
+				t.Fatalf("cmd = nil, want quit command")
+			}
+		})
+	}
+}
+
+func TestModelClampSelectionForSnapshotSizes(t *testing.T) {
+	model := NewModel(Options{})
+	model.selected = 5
+
+	model, _ = updateModel(model, SnapshotMsg(snapshotWithDevices(0)))
+	if model.selected != 0 {
+		t.Fatalf("selected after empty snapshot = %d, want 0", model.selected)
+	}
+
+	model.selected = 2
+	model, _ = updateModel(model, SnapshotMsg(snapshotWithDevices(1)))
+	if model.selected != 0 {
+		t.Fatalf("selected after shrink = %d, want 0", model.selected)
+	}
+}
+
+func TestModelWindowSizeMessageUpdatesDimensions(t *testing.T) {
+	model := NewModel(Options{})
+
+	model, _ = updateModel(model, tea.WindowSizeMsg{Width: 100, Height: 40})
+	if model.width != 100 {
+		t.Fatalf("width = %d, want 100", model.width)
+	}
+	if model.height != 40 {
+		t.Fatalf("height = %d, want 40", model.height)
+	}
+}
+
+func TestModelErrMsgStoresError(t *testing.T) {
+	model := NewModel(Options{})
+	err := errors.New("poll failed")
+
+	model, _ = updateModel(model, ErrMsg{Err: err})
+	if !errors.Is(model.err, err) {
+		t.Fatalf("err = %v, want %v", model.err, err)
+	}
+}
+
+func TestModelSnapshotMessageClearsError(t *testing.T) {
+	model := NewModel(Options{})
+	model.err = errors.New("poll failed")
+
+	model, _ = updateModel(model, SnapshotMsg(snapshotWithDevices(1)))
+	if model.err != nil {
+		t.Fatalf("err = %v, want nil", model.err)
 	}
 }
 
