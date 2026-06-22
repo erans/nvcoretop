@@ -85,6 +85,36 @@ func TestModelToggleKeys(t *testing.T) {
 	}
 }
 
+func TestModelTensorWallKeys(t *testing.T) {
+	model := NewModel(Options{})
+	model.detail = true
+
+	model, _ = updateModel(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	if model.view != viewTensorWall {
+		t.Fatalf("view = %v, want tensor wall", model.view)
+	}
+	if !model.detail {
+		t.Fatalf("detail = false, want preserved while entering tensor wall")
+	}
+
+	model, _ = updateModel(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	if model.view != viewOverview {
+		t.Fatalf("view = %v, want overview after toggling tensor wall off", model.view)
+	}
+	if !model.detail {
+		t.Fatalf("detail = false, want t toggle to preserve previous detail state")
+	}
+
+	model, _ = updateModel(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	model, _ = updateModel(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("o")})
+	if model.view != viewOverview {
+		t.Fatalf("view = %v, want overview after o", model.view)
+	}
+	if model.detail {
+		t.Fatalf("detail = true, want o to return to overview without detail")
+	}
+}
+
 func TestModelSortKeyCyclesSortMode(t *testing.T) {
 	model := NewModel(Options{})
 

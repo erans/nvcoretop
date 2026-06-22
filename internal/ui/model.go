@@ -22,6 +22,13 @@ type ErrMsg struct {
 	Err error
 }
 
+type viewMode int
+
+const (
+	viewOverview viewMode = iota
+	viewTensorWall
+)
+
 type Model struct {
 	snapshot gpu.Snapshot
 	history  *history.Store
@@ -31,6 +38,7 @@ type Model struct {
 	help     bool
 	dcgmView bool
 	sort     SortMode
+	view     viewMode
 	width    int
 	height   int
 	err      error
@@ -89,6 +97,15 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 			m.clampSelection()
 		case "d":
 			m.dcgmView = !m.dcgmView
+		case "t":
+			if m.view == viewTensorWall {
+				m.view = viewOverview
+			} else {
+				m.view = viewTensorWall
+			}
+		case "o":
+			m.view = viewOverview
+			m.detail = false
 		case "p":
 			m.paused = !m.paused
 		case "?":
