@@ -496,7 +496,7 @@ git commit -m "feat: render tensor heatmap wall"
 - Modify: `internal/ui/render.go`
 - Modify: `internal/ui/render_test.go`
 
-- [ ] **Step 1: Add failing color tests**
+- [ ] **Step 1: Add failing color and colored-width tests**
 
 Append these tests to `internal/ui/render_test.go`:
 
@@ -511,6 +511,11 @@ func TestRenderTensorWallUsesColorWhenEnabled(t *testing.T) {
 	if !strings.Contains(view, "\x1b[") {
 		t.Fatalf("colored tensor wall missing ANSI escapes:\n%s", view)
 	}
+	for _, want := range []string{"Tensor Pipe 92%", "DRAM 71%"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("colored tensor wall missing unstyled text %q in:\n%s", want, view)
+		}
+	}
 }
 
 func TestRenderOverviewUsesColorWhenEnabled(t *testing.T) {
@@ -522,6 +527,49 @@ func TestRenderOverviewUsesColorWhenEnabled(t *testing.T) {
 	if !strings.Contains(view, "\x1b[") {
 		t.Fatalf("colored overview missing ANSI escapes:\n%s", view)
 	}
+}
+
+func TestRenderTensorWallColoredLineWidthBounded(t *testing.T) {
+	model := NewModel(Options{Interval: "very-long-refresh-interval-for-width-test"})
+	snapshot := snapshotWithTensorActivity()
+	for i := range snapshot.Devices {
+		snapshot.Devices[i].Name = "NVIDIA H100 SXM5 80GB Very Long Engineering Sample Name"
+	}
+	model, _ = updateModel(model, SnapshotMsg(snapshot))
+	model, _ = updateModel(model, tea.WindowSizeMsg{Width: 48, Height: 18})
+	model, _ = updateModel(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	model, _ = updateModel(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+
+	view := model.View()
+	if !strings.Contains(view, "\x1b[") {
+		t.Fatalf("colored tensor wall missing ANSI escapes:\n%s", view)
+	}
+	for _, line := range strings.Split(view, "\n") {
+		plain := stripANSI(line)
+		if got := utf8.RuneCountInString(plain); got > model.width {
+			t.Fatalf("colored tensor wall plain line length = %d, want <= %d:\n%s", got, model.width, view)
+		}
+	}
+}
+
+func stripANSI(value string) string {
+	var builder strings.Builder
+	inEscape := false
+	for i := 0; i < len(value); i++ {
+		b := value[i]
+		if inEscape {
+			if b >= '@' && b <= '~' {
+				inEscape = false
+			}
+			continue
+		}
+		if b == '\x1b' {
+			inEscape = true
+			continue
+		}
+		builder.WriteByte(b)
+	}
+	return builder.String()
 }
 ```
 
@@ -561,241 +609,199 @@ func (p palette) optionalActivity(value float64, ok bool) lipgloss.Style {
 }
 ```
 
-- [ ] **Step 4: Apply color in the tensor wall renderer**
+- [ ] **Step 4: Add raw-line styling helpers in the tensor wall renderer**
 
-Change the `renderTensorWall` title in `internal/ui/tensor_wall.go` from:
+Task 2 uses `truncateRunes` before returning plain strings. Keep that invariant: truncate raw text first, then style tokens or complete lines. Do not pass already-styled strings into `truncateRunes`.
+
+In `internal/ui/tensor_wall.go`, add this helper after `tensorPercentText`:
 
 ```go
-	lines := []string{"Tensor/DRAM Activity Wall"}
+func styleActivityText(text string, value gpu.Optional[float64], st palette, noColor bool) string {
+	if noColor {
+		return text
+	}
+	return st.optionalActivity(optionalFloatPercent(value), value.OK).Render(text)
+}
+
+func styleMuted(text string, st palette, noColor bool) string {
+	if noColor {
+		return text
+	}
+	return st.muted.Render(text)
+}
 ```
 
-to:
+- [ ] **Step 5: Apply color in the tensor wall renderer**
+
+Update `renderTensorWall` to create `st := styles(m.options.NoColor)`, use a raw title truncated to width, then style it:
 
 ```go
 	st := styles(m.options.NoColor)
-	lines := []string{st.hot.Render("Tensor/DRAM Activity Wall")}
+	title := truncateRunes("Tensor/DRAM Activity Wall", m.width)
+	if !m.options.NoColor {
+		title = st.hot.Render(title)
+	}
+	lines := []string{title}
 ```
 
-Change the block call from:
+Update the block call to pass styles and no-color mode:
 
 ```go
-		lines = append(lines, renderTensorGPUBlock(device, m.snapshot.Source, width, heatWidth, heatHeight)...)
+		lines = append(lines, renderTensorGPUBlock(device, m.snapshot.Source, m.width, heatWidth, heatHeight, st, m.options.NoColor)...)
 ```
 
-to:
-
-```go
-		lines = append(lines, renderTensorGPUBlock(device, m.snapshot.Source, width, heatWidth, heatHeight, st, m.options.NoColor)...)
-```
-
-Change the function signature from:
-
-```go
-func renderTensorGPUBlock(device gpu.DeviceSample, source gpu.Source, width, heatWidth, heatHeight int) []string {
-```
-
-to:
+Update `renderTensorGPUBlock` signature:
 
 ```go
 func renderTensorGPUBlock(device gpu.DeviceSample, source gpu.Source, width, heatWidth, heatHeight int, st palette, noColor bool) []string {
 ```
 
-Replace the `lines := []string{...}` block inside `renderTensorGPUBlock` with:
+Inside `renderTensorGPUBlock`, keep raw strings width-bounded before styling. Replace the header/context construction with:
 
 ```go
-	header := fmt.Sprintf(
-		"GPU %-2d %-*s Tensor Pipe %s  DRAM %s",
-		device.Index,
-		tensorNameWidth(width),
-		name,
-		st.optionalActivity(optionalFloatPercent(device.TensorActivePct), device.TensorActivePct.OK).Render(percentFloatText(device.TensorActivePct)),
-		st.optionalActivity(optionalFloatPercent(device.MemPipeActivePct), device.MemPipeActivePct.OK).Render(percentFloatText(device.MemPipeActivePct)),
-	)
-	context := fmt.Sprintf(
-		"  SM %s  FP32 %s  util %s  mem %s  temp %s  source %s",
-		st.optionalActivity(optionalFloatPercent(device.SMActivePct), device.SMActivePct.OK).Render(percentFloatText(device.SMActivePct)),
-		st.optionalActivity(optionalFloatPercent(device.FP32ActivePct), device.FP32ActivePct.OK).Render(percentFloatText(device.FP32ActivePct)),
-		st.optionalActivity(percentFloat(device.GPUUtil), device.GPUUtil.OK).Render(percentText(device.GPUUtil)),
-		memCell(device),
-		tempCell(device),
-		st.muted.Render(source.String()),
-	)
-	if noColor {
-		header = truncateRunes(header, width)
-		context = truncateRunes(context, width)
-	}
-	lines := []string{header, context}
-```
-
-Change `appendActivityHeatmap` from:
-
-```go
-func appendActivityHeatmap(lines []string, label string, value gpu.Optional[float64], width, heatWidth, heatHeight int) []string {
-	if !value.OK {
-		return append(lines, truncateRunes(fmt.Sprintf("  %-11s unavailable (DCGM field missing)", label), width))
-	}
-	for _, row := range tensorHeatmapRows(value, heatWidth, heatHeight) {
-		lines = append(lines, truncateRunes(fmt.Sprintf("  %-11s %s", label, row), width))
-	}
-	return lines
+name := truncateRunes(device.Name, tensorNameWidth(width))
+tensorText := tensorMetricSummary("Tensor Pipe", device.TensorActivePct)
+dramText := tensorMetricSummary("DRAM", device.MemPipeActivePct)
+headerRaw := truncateRunes(fmt.Sprintf("GPU %d %s  %s  %s", device.Index, name, tensorText, dramText), width)
+header := headerRaw
+if !noColor {
+	header = strings.Replace(header, tensorText, styleActivityText(tensorText, device.TensorActivePct, st, noColor), 1)
+	header = strings.Replace(header, dramText, styleActivityText(dramText, device.MemPipeActivePct, st, noColor), 1)
 }
+contextRaw := truncateRunes(fmt.Sprintf(
+	"  SM %s  FP32 %s  util %s  mem %s  temp %s  source %s",
+	percentFloatText(device.SMActivePct),
+	percentFloatText(device.FP32ActivePct),
+	percentText(device.GPUUtil),
+	memCell(device),
+	tempCell(device),
+	source.String(),
+), width)
+context := contextRaw
+if !noColor {
+	context = strings.Replace(context, percentFloatText(device.SMActivePct), styleActivityText(percentFloatText(device.SMActivePct), device.SMActivePct, st, noColor), 1)
+	context = strings.Replace(context, percentFloatText(device.FP32ActivePct), styleActivityText(percentFloatText(device.FP32ActivePct), device.FP32ActivePct, st, noColor), 1)
+	context = strings.Replace(context, percentText(device.GPUUtil), st.optionalActivity(percentFloat(device.GPUUtil), device.GPUUtil.OK).Render(percentText(device.GPUUtil)), 1)
+	context = strings.Replace(context, source.String(), styleMuted(source.String(), st, noColor), 1)
+}
+lines := []string{header, context}
 ```
 
-to:
+Update `appendActivityHeatmap` signature:
 
 ```go
 func appendActivityHeatmap(lines []string, label string, value gpu.Optional[float64], width, heatWidth, heatHeight int, st palette, noColor bool) []string {
-	labelText := label
+```
+
+Inside `appendActivityHeatmap`, build raw bounded lines and then style the label, unavailable text, and cells:
+
+```go
+if !value.OK {
+	line := truncateRunes(fmt.Sprintf("  %s unavailable (DCGM field missing)", label), width)
 	if !noColor {
-		labelText = st.muted.Render(label)
+		line = strings.Replace(line, label, styleMuted(label, st, noColor), 1)
+		line = strings.Replace(line, "unavailable (DCGM field missing)", styleMuted("unavailable (DCGM field missing)", st, noColor), 1)
 	}
-	if !value.OK {
-		unavailable := fmt.Sprintf("  %-11s %s", labelText, st.muted.Render("unavailable (DCGM field missing)"))
-		if noColor {
-			unavailable = truncateRunes(unavailable, width)
-		}
-		return append(lines, unavailable)
-	}
-	for _, row := range tensorHeatmapRows(value, heatWidth, heatHeight, st) {
-		line := fmt.Sprintf("  %-11s %s", labelText, row)
-		if noColor {
-			line = truncateRunes(line, width)
-		}
-		lines = append(lines, line)
-	}
-	return lines
+	return append(lines, line)
 }
+
+summary := truncateRunes(fmt.Sprintf("  %s %s", label, tensorPercentText(value)), width)
+if !noColor {
+	summary = strings.Replace(summary, label, styleMuted(label, st, noColor), 1)
+	summary = strings.Replace(summary, tensorPercentText(value), styleActivityText(tensorPercentText(value), value, st, noColor), 1)
+}
+lines = append(lines, summary)
+for _, row := range tensorHeatmapRows(value, heatWidth, heatHeight, st, noColor) {
+	line := truncateRunes("  "+row, width)
+	if !noColor {
+		line = styleHeatmapRow(line, value, st)
+	}
+	lines = append(lines, line)
+}
+return lines
 ```
 
-Change the heatmap calls from:
+Update the calls:
 
 ```go
-	lines = appendActivityHeatmap(lines, "Tensor Pipe", device.TensorActivePct, width, heatWidth, heatHeight)
-	lines = appendActivityHeatmap(lines, "DRAM", device.MemPipeActivePct, width, heatWidth, heatHeight)
+lines = appendActivityHeatmap(lines, "Tensor Pipe", device.TensorActivePct, width, heatWidth, heatHeight, st, noColor)
+lines = appendActivityHeatmap(lines, "DRAM", device.MemPipeActivePct, width, heatWidth, heatHeight, st, noColor)
 ```
 
-to:
+Update `tensorHeatmapRows` signature but keep it plain-text so existing tests continue to assert exact block strings:
 
 ```go
-	lines = appendActivityHeatmap(lines, "Tensor Pipe", device.TensorActivePct, width, heatWidth, heatHeight, st, noColor)
-	lines = appendActivityHeatmap(lines, "DRAM", device.MemPipeActivePct, width, heatWidth, heatHeight, st, noColor)
+func tensorHeatmapRows(value gpu.Optional[float64], width, height int, _ palette, _ bool) []string {
 ```
 
-Change the heatmap function signature from:
+Add this helper to color already-width-bounded rows:
 
 ```go
-func tensorHeatmapRows(value gpu.Optional[float64], width, height int) []string {
-```
-
-to:
-
-```go
-func tensorHeatmapRows(value gpu.Optional[float64], width, height int, st palette) []string {
-```
-
-Inside `tensorHeatmapRows`, add this line after `filled := 0`:
-
-```go
+func styleHeatmapRow(row string, value gpu.Optional[float64], st palette) string {
 	cellStyle := st.muted
-```
-
-Inside the `if value.OK` block, add this line after `filled = int(math.Round((percent / 100) * float64(total)))`:
-
-```go
-		cellStyle = st.activity(percent)
-```
-
-Replace the cell-writing block:
-
-```go
-			if cell < filled {
-				builder.WriteRune('█')
-			} else {
-				builder.WriteRune('░')
-			}
-```
-
-with:
-
-```go
-			if cell < filled {
-				builder.WriteString(cellStyle.Render("█"))
-			} else {
-				builder.WriteString(st.muted.Render("░"))
-			}
-```
-
-- [ ] **Step 5: Apply visible color to overview chrome**
-
-In `internal/ui/render.go`, change `renderOverview` from:
-
-```go
-func (m Model) renderOverview() string {
-	lines := []string{" #  NAME        UTIL        MEM             TEMP   PWR        CORES"}
-```
-
-to:
-
-```go
-func (m Model) renderOverview() string {
-	st := styles(m.options.NoColor)
-	lines := []string{st.muted.Render(" #  NAME        UTIL        MEM             TEMP   PWR        CORES")}
-```
-
-Change the cursor assignment from:
-
-```go
-		cursor := " "
-		if row == m.selected {
-			cursor = ">"
+	if value.OK {
+		cellStyle = st.activity(optionalFloatPercent(value))
+	}
+	var builder strings.Builder
+	for _, r := range row {
+		switch r {
+		case '█':
+			builder.WriteString(cellStyle.Render(string(r)))
+		case '░':
+			builder.WriteString(st.muted.Render(string(r)))
+		default:
+			builder.WriteRune(r)
 		}
+	}
+	return builder.String()
+}
 ```
 
-to:
+Existing tests that call `tensorHeatmapRows(value, width, height)` should be updated to pass `styles(true), true`.
 
-```go
-		cursor := " "
-		if row == m.selected {
-			cursor = st.ok.Render(">")
-		}
-```
+- [ ] **Step 6: Apply visible color to overview chrome and tensor-wall chrome**
 
-Change `renderFooter` from:
+In `internal/ui/render.go`, keep raw truncation before styling. In tensor-wall mode:
+
+- create `st := styles(m.options.NoColor)`
+- truncate raw error/footer/help text first
+- render muted error text, footer text, and help text only after truncation when color is enabled
+
+For `renderOverview`, color the header and selected cursor using existing `styles(m.options.NoColor)` as originally planned.
+
+For `renderFooter`, color only the status token:
 
 ```go
 func (m Model) renderFooter() string {
-	status := "running"
+	st := styles(m.options.NoColor)
+	statusText := "running"
+	status := statusText
 	if m.paused {
-		status = "paused"
+		statusText = "paused"
+		status = statusText
+	}
+	if !m.options.NoColor {
+		if m.paused {
+			status = st.warn.Render(statusText)
+		} else {
+			status = st.ok.Render(statusText)
+		}
 	}
 	return fmt.Sprintf("%s | interval %s | sort %s | source %s", status, m.options.Interval, m.sort.String(), m.snapshot.Source.String())
 }
 ```
 
-to:
-
-```go
-func (m Model) renderFooter() string {
-	st := styles(m.options.NoColor)
-	status := st.ok.Render("running")
-	if m.paused {
-		status = st.warn.Render("paused")
-	}
-	return fmt.Sprintf("%s | interval %s | sort %s | source %s", status, m.options.Interval, m.sort.String(), m.snapshot.Source.String())
-}
-```
-
-- [ ] **Step 6: Run focused color and no-color tests**
+- [ ] **Step 7: Run focused color and no-color tests**
 
 Run:
 
 ```bash
-go test ./internal/ui -run 'TestRender(TensorWallUsesColorWhenEnabled|OverviewUsesColorWhenEnabled|TensorWallNoColorMultipleGPUs|OverviewNoColor)' -v
+go test ./internal/ui -run 'TestRender(TensorWallUsesColorWhenEnabled|TensorWallColoredLineWidthBounded|OverviewUsesColorWhenEnabled|TensorWallNoColorMultipleGPUs|OverviewNoColor|TensorWallLineWidthBoundedNoColor|TensorWallFooterHelpWidthBoundedNoColor)' -v
 ```
 
-Expected: color-enabled tests contain ANSI escapes, and no-color tests contain no ANSI escapes.
+Expected: color-enabled tests contain ANSI escapes, stripped colored tensor-wall lines stay width-bounded, and no-color tests contain no ANSI escapes.
 
-- [ ] **Step 7: Run all UI tests**
+- [ ] **Step 8: Run all UI tests**
 
 Run:
 
@@ -805,7 +811,7 @@ go test ./internal/ui -v
 
 Expected: all `internal/ui` tests pass.
 
-- [ ] **Step 8: Commit color styling**
+- [ ] **Step 9: Commit color styling**
 
 Run:
 
