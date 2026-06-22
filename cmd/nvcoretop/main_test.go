@@ -2,10 +2,14 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
-	"errors"
 	"strings"
 	"testing"
+	"time"
+
+	"nvcoretop/internal/gpu"
+	"nvcoretop/internal/ui"
 )
 
 func TestRunVersion(t *testing.T) {
@@ -56,20 +60,54 @@ func TestRunJSON(t *testing.T) {
 	}
 }
 
-func TestRunDefaultMode(t *testing.T) {
-	var stdout, stderr bytes.Buffer
+func TestRunDefaultModeDispatchesTUI(t *testing.T) {
+	originalRunTUI := runTUI
+	defer func() {
+		runTUI = originalRunTUI
+	}()
 
-	if err := run(nil, &stdout, &stderr); err != nil {
-		if !errors.Is(err, ErrTUIUnavailable) {
-			t.Fatalf("run error = %v, want ErrTUIUnavailable", err)
+	var stdout, stderr bytes.Buffer
+	called := false
+	runTUI = func(ctx context.Context, sampler gpu.Sampler, interval time.Duration, options ui.Options) error {
+		t.Helper()
+		called = true
+
+		if ctx == nil {
+			t.Fatalf("ctx = nil, want context")
 		}
+		if interval != 250*time.Millisecond {
+			t.Fatalf("interval = %s, want 250ms", interval)
+		}
+		if options.Interval != "250ms" {
+			t.Fatalf("options.Interval = %q, want 250ms", options.Interval)
+		}
+		if !options.NoColor {
+			t.Fatalf("options.NoColor = false, want true")
+		}
+
+		snapshot, err := sampler.Sample(ctx)
+		if err != nil {
+			t.Fatalf("sampler.Sample error = %v", err)
+		}
+		if snapshot.Source != gpu.SourceNVML {
+			t.Fatalf("snapshot.Source = %s, want NVML", snapshot.Source)
+		}
+		return nil
+	}
+
+	if err := run([]string{"--interval", "250ms", "--no-color"}, &stdout, &stderr); err != nil {
+		t.Fatalf("run error = %v", err)
+	}
+
+	if !called {
+		t.Fatalf("runTUI was not called")
 	}
 
 	if stdout.Len() != 0 {
 		t.Fatalf("stdout = %q, want empty", stdout.String())
 	}
-	if got := stderr.String(); !strings.Contains(got, "interactive TUI mode will be enabled by the UI plan") {
-		t.Fatalf("stderr = %q, want TUI message", got)
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
 }
 

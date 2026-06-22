@@ -11,11 +11,12 @@ import (
 	"nvcoretop/internal/app"
 	"nvcoretop/internal/export"
 	"nvcoretop/internal/gpu"
+	"nvcoretop/internal/ui"
 )
 
 var version = "dev"
 
-var ErrTUIUnavailable = errors.New("interactive TUI mode is unavailable")
+var runTUI = ui.Run
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
@@ -72,11 +73,14 @@ func run(args []string, stdout, stderr io.Writer) (err error) {
 			Fields:   cfg.Fields,
 		})
 	default:
-		_, err := fmt.Fprintln(stderr, "interactive TUI mode will be enabled by the UI plan")
-		if err != nil {
-			return err
-		}
-		return ErrTUIUnavailable
+		sampler := gpu.NewFakeSampler([]gpu.FakeStep{{
+			Snapshot: gpu.Snapshot{Source: gpu.SourceNVML},
+		}})
+		defer sampler.Close()
+		return runTUI(context.Background(), sampler, cfg.Interval, ui.Options{
+			Interval: cfg.Interval.String(),
+			NoColor:  cfg.NoColor,
+		})
 	}
 }
 
