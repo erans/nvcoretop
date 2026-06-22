@@ -123,6 +123,26 @@ Common export fields include:
 Unsupported or unavailable fields are emitted as `null` in JSON and empty
 values in CSV.
 
+## Release
+
+Releases are created from version tags that start with `v`.
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Pushing the tag runs the release workflow. The workflow verifies the project,
+builds a Linux amd64 binary with the tag injected into `nvcoretop --version`,
+packages `nvcoretop`, `README.md`, and `LICENSE`, then attaches the tarball and
+SHA256 checksum to the GitHub Release.
+
+For a local versioned build:
+
+```sh
+go build -trimpath -ldflags "-X main.version=v0.1.0" ./cmd/nvcoretop
+```
+
 ## Development
 
 Run the default test suite:
