@@ -60,10 +60,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return next, cmd
 }
 
-func (m Model) View() string {
-	return ""
-}
-
 func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
