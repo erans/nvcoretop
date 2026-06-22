@@ -275,6 +275,121 @@ func TestSampleSkipsInvalidNVLinkTotalsWithoutUpdatingBaseline(t *testing.T) {
 	assertOptional(t, "NVLinkRxKBps", third.Devices[0].NVLinkRxKBps, uint64(2))
 }
 
+func TestSampleReplacesNVLinkBaselineWhenEnabledLinkSetChanges(t *testing.T) {
+	device := scriptedNVLinkDevice(t, []nvlinkSample{
+		{links: map[int]nvlinkFieldResult{
+			0: {tx: 0, rx: 0},
+			1: {tx: 0, rx: 0},
+		}},
+		{links: map[int]nvlinkFieldResult{
+			0: {tx: 2048, rx: 4096},
+		}},
+		{links: map[int]nvlinkFieldResult{
+			0: {tx: 4096, rx: 8192},
+			1: {tx: 1024, rx: 2048},
+		}},
+		{links: map[int]nvlinkFieldResult{
+			0: {tx: 6144, rx: 12288},
+			1: {tx: 3072, rx: 6144},
+		}},
+	})
+	sampler := newScriptedNVLinkSampler(t, device, []time.Time{
+		time.Unix(10, 0),
+		time.Unix(12, 0),
+		time.Unix(14, 0),
+		time.Unix(16, 0),
+	})
+	defer sampler.Close()
+
+	first := mustSample(t, sampler)
+	assertMissingNVLink(t, "first", first.Devices[0])
+
+	second := mustSample(t, sampler)
+	assertMissingNVLink(t, "second", second.Devices[0])
+
+	third := mustSample(t, sampler)
+	assertMissingNVLink(t, "third", third.Devices[0])
+
+	fourth := mustSample(t, sampler)
+	assertOptional(t, "NVLinkTxKBps", fourth.Devices[0].NVLinkTxKBps, uint64(2))
+	assertOptional(t, "NVLinkRxKBps", fourth.Devices[0].NVLinkRxKBps, uint64(4))
+}
+
+func TestSampleKeepsNVLinkBaselineWhenTrackedLinkStateFails(t *testing.T) {
+	device := scriptedNVLinkDevice(t, []nvlinkSample{
+		{links: map[int]nvlinkFieldResult{
+			0: {tx: 0, rx: 0},
+			1: {tx: 0, rx: 0},
+		}},
+		{
+			links: map[int]nvlinkFieldResult{
+				0: {tx: 2048, rx: 4096},
+			},
+			stateFailures: map[int]nvidia.Return{1: nvidia.ERROR_UNKNOWN},
+		},
+		{links: map[int]nvlinkFieldResult{
+			0: {tx: 4096, rx: 8192},
+			1: {tx: 4096, rx: 8192},
+		}},
+	})
+	sampler := newScriptedNVLinkSampler(t, device, []time.Time{
+		time.Unix(10, 0),
+		time.Unix(12, 0),
+		time.Unix(14, 0),
+	})
+	defer sampler.Close()
+
+	first := mustSample(t, sampler)
+	assertMissingNVLink(t, "first", first.Devices[0])
+
+	second := mustSample(t, sampler)
+	assertMissingNVLink(t, "second", second.Devices[0])
+
+	third := mustSample(t, sampler)
+	assertOptional(t, "NVLinkTxKBps", third.Devices[0].NVLinkTxKBps, uint64(2))
+	assertOptional(t, "NVLinkRxKBps", third.Devices[0].NVLinkRxKBps, uint64(4))
+}
+
+func TestSampleClearsNVLinkBaselineWhenNoLinksAreEnabled(t *testing.T) {
+	device := scriptedNVLinkDevice(t, []nvlinkSample{
+		{links: map[int]nvlinkFieldResult{
+			0: {tx: 0, rx: 0},
+		}},
+		{},
+		{links: map[int]nvlinkFieldResult{
+			0: {tx: 2048, rx: 4096},
+		}},
+		{links: map[int]nvlinkFieldResult{
+			0: {tx: 4096, rx: 8192},
+		}},
+	})
+	sampler := newScriptedNVLinkSampler(t, device, []time.Time{
+		time.Unix(10, 0),
+		time.Unix(12, 0),
+		time.Unix(14, 0),
+		time.Unix(16, 0),
+	})
+	defer sampler.Close()
+
+	first := mustSample(t, sampler)
+	assertMissingNVLink(t, "first", first.Devices[0])
+
+	second := mustSample(t, sampler)
+	assertMissingNVLink(t, "second", second.Devices[0])
+
+	third := mustSample(t, sampler)
+	assertMissingNVLink(t, "third", third.Devices[0])
+
+	fourth := mustSample(t, sampler)
+	assertOptional(t, "NVLinkTxKBps", fourth.Devices[0].NVLinkTxKBps, uint64(1))
+	assertOptional(t, "NVLinkRxKBps", fourth.Devices[0].NVLinkRxKBps, uint64(2))
+}
+
+type nvlinkSample struct {
+	links         map[int]nvlinkFieldResult
+	stateFailures map[int]nvidia.Return
+}
+
 type nvlinkFieldResult struct {
 	tx      uint64
 	rx      uint64
@@ -285,22 +400,49 @@ type nvlinkFieldResult struct {
 
 func sequentialNVLinkDevice(t *testing.T, results []nvlinkFieldResult) *mock.Device {
 	t.Helper()
+	samples := make([]nvlinkSample, 0, len(results))
+	for _, result := range results {
+		samples = append(samples, nvlinkSample{
+			links: map[int]nvlinkFieldResult{0: result},
+		})
+	}
+	return scriptedNVLinkDevice(t, samples)
+}
+
+func scriptedNVLinkDevice(t *testing.T, samples []nvlinkSample) *mock.Device {
+	t.Helper()
 	device := minimalMockDevice()
+	sampleIndex := -1
 	device.GetNvLinkStateFunc = func(link int) (nvidia.EnableState, nvidia.Return) {
 		if link == 0 {
+			sampleIndex++
+		}
+		if sampleIndex >= len(samples) {
+			t.Fatalf("unexpected GetNvLinkState call for sample %d link %d", sampleIndex+1, link)
+		}
+		sample := samples[sampleIndex]
+		if ret, ok := sample.stateFailures[link]; ok {
+			return nvidia.FEATURE_DISABLED, ret
+		}
+		if _, ok := sample.links[link]; ok {
 			return nvidia.FEATURE_ENABLED, nvidia.SUCCESS
 		}
 		return nvidia.FEATURE_DISABLED, nvidia.SUCCESS
 	}
 
-	call := 0
 	device.GetFieldValuesFunc = func(values []nvidia.FieldValue) nvidia.Return {
-		if call >= len(results) {
-			t.Fatalf("unexpected GetFieldValues call %d", call+1)
+		if sampleIndex < 0 {
+			t.Fatalf("GetFieldValues called before GetNvLinkState")
 		}
-		result := results[call]
-		call++
-		assertNVLinkFieldRequest(t, values, 0)
+		if sampleIndex >= len(samples) {
+			t.Fatalf("unexpected GetFieldValues call for sample %d", sampleIndex+1)
+		}
+		link := int(values[0].ScopeId)
+		assertNVLinkFieldRequest(t, values, link)
+		result, ok := samples[sampleIndex].links[link]
+		if !ok {
+			t.Fatalf("unexpected GetFieldValues call for sample %d link %d", sampleIndex+1, link)
+		}
 		if result.callRet != nvidia.SUCCESS {
 			return result.callRet
 		}
@@ -309,6 +451,42 @@ func sequentialNVLinkDevice(t *testing.T, results []nvlinkFieldResult) *mock.Dev
 		return nvidia.SUCCESS
 	}
 	return device
+}
+
+func newScriptedNVLinkSampler(t *testing.T, device nvidia.Device, timestamps []time.Time) *Sampler {
+	t.Helper()
+	nowCalls := 0
+	installFakeNVML(t, &fakeNVML{count: 1, handles: []nvidia.Device{device}})
+	sampler, err := New(Options{
+		Now: func() time.Time {
+			if nowCalls >= len(timestamps) {
+				t.Fatalf("unexpected Now call %d", nowCalls+1)
+			}
+			at := timestamps[nowCalls]
+			nowCalls++
+			return at
+		},
+	})
+	if err != nil {
+		t.Fatalf("New error = %v", err)
+	}
+	return sampler
+}
+
+func mustSample(t *testing.T, sampler *Sampler) gpu.Snapshot {
+	t.Helper()
+	snapshot, err := sampler.Sample(context.Background())
+	if err != nil {
+		t.Fatalf("Sample error = %v", err)
+	}
+	return snapshot
+}
+
+func assertMissingNVLink(t *testing.T, label string, sample gpu.DeviceSample) {
+	t.Helper()
+	if sample.NVLinkTxKBps.OK || sample.NVLinkRxKBps.OK {
+		t.Fatalf("%s NVLink throughput = tx %#v rx %#v, want missing", label, sample.NVLinkTxKBps, sample.NVLinkRxKBps)
+	}
 }
 
 type fakeNVML struct {

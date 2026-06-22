@@ -75,14 +75,21 @@ func (s *Sampler) Sample(ctx context.Context) (gpu.Snapshot, error) {
 	}
 	for index, device := range s.devices {
 		deviceSample := sampleDevice(index, device, processNameFromProc)
-		if totals, found := readNVLinkTotals(device, snapshot.Timestamp); found {
-			if previous, ok := s.lastNVLink[index]; ok {
-				applyNVLinkDelta(&deviceSample, previous, totals)
-			}
+		if totals, usable := readNVLinkTotals(device, snapshot.Timestamp); usable {
 			if s.lastNVLink == nil {
 				s.lastNVLink = make(map[int]nvlinkTotals)
 			}
-			s.lastNVLink[index] = totals
+			previous, hasPrevious := s.lastNVLink[index]
+			switch {
+			case hasPrevious && totals.failedLinks&previous.links != 0:
+			case totals.links == 0:
+				delete(s.lastNVLink, index)
+			default:
+				if hasPrevious {
+					applyNVLinkDelta(&deviceSample, previous, totals)
+				}
+				s.lastNVLink[index] = totals
+			}
 		}
 		snapshot.Devices = append(snapshot.Devices, deviceSample)
 	}

@@ -142,8 +142,8 @@ func TestUnsupportedFieldsStayMissing(t *testing.T) {
 }
 
 func TestApplyNVLinkDelta(t *testing.T) {
-	previous := nvlinkTotals{at: time.Unix(10, 0), tx: 1024, rx: 2048}
-	current := nvlinkTotals{at: time.Unix(12, 0), tx: 3072, rx: 6144}
+	previous := nvlinkTotals{at: time.Unix(10, 0), links: nvlinkLink(0), tx: 1024, rx: 2048}
+	current := nvlinkTotals{at: time.Unix(12, 0), links: nvlinkLink(0), tx: 3072, rx: 6144}
 	sample := gpu.DeviceSample{Index: 0}
 
 	applyNVLinkDelta(&sample, previous, current)
@@ -164,23 +164,23 @@ func TestApplyNVLinkDeltaSkipsInvalidDeltas(t *testing.T) {
 	}{
 		{
 			name:     "zero elapsed",
-			previous: nvlinkTotals{at: time.Unix(10, 0), tx: 1024, rx: 1024},
-			current:  nvlinkTotals{at: time.Unix(10, 0), tx: 2048, rx: 2048},
+			previous: nvlinkTotals{at: time.Unix(10, 0), links: nvlinkLink(0), tx: 1024, rx: 1024},
+			current:  nvlinkTotals{at: time.Unix(10, 0), links: nvlinkLink(0), tx: 2048, rx: 2048},
 		},
 		{
 			name:     "negative elapsed",
-			previous: nvlinkTotals{at: time.Unix(10, 0), tx: 1024, rx: 1024},
-			current:  nvlinkTotals{at: time.Unix(9, 0), tx: 2048, rx: 2048},
+			previous: nvlinkTotals{at: time.Unix(10, 0), links: nvlinkLink(0), tx: 1024, rx: 1024},
+			current:  nvlinkTotals{at: time.Unix(9, 0), links: nvlinkLink(0), tx: 2048, rx: 2048},
 		},
 		{
 			name:     "tx rolls backward",
-			previous: nvlinkTotals{at: time.Unix(10, 0), tx: 2048, rx: 1024},
-			current:  nvlinkTotals{at: time.Unix(12, 0), tx: 1024, rx: 2048},
+			previous: nvlinkTotals{at: time.Unix(10, 0), links: nvlinkLink(0), tx: 2048, rx: 1024},
+			current:  nvlinkTotals{at: time.Unix(12, 0), links: nvlinkLink(0), tx: 1024, rx: 2048},
 		},
 		{
 			name:     "rx rolls backward",
-			previous: nvlinkTotals{at: time.Unix(10, 0), tx: 1024, rx: 2048},
-			current:  nvlinkTotals{at: time.Unix(12, 0), tx: 2048, rx: 1024},
+			previous: nvlinkTotals{at: time.Unix(10, 0), links: nvlinkLink(0), tx: 1024, rx: 2048},
+			current:  nvlinkTotals{at: time.Unix(12, 0), links: nvlinkLink(0), tx: 2048, rx: 1024},
 		},
 	}
 

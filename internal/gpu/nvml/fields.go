@@ -12,10 +12,14 @@ import (
 )
 
 type nvlinkTotals struct {
-	at time.Time
-	tx uint64
-	rx uint64
+	at          time.Time
+	links       nvlinkLinkSet
+	failedLinks nvlinkLinkSet
+	tx          uint64
+	rx          uint64
 }
+
+type nvlinkLinkSet uint32
 
 func sampleDevice(index int, device nvidia.Device, processName func(uint32) string) gpu.DeviceSample {
 	sample := gpu.DeviceSample{Index: index}
@@ -111,13 +115,17 @@ func mapThrottleReasons(bits uint64) gpu.ThrottleReasons {
 
 func readNVLinkTotals(device nvidia.Device, at time.Time) (nvlinkTotals, bool) {
 	totals := nvlinkTotals{at: at}
-	found := false
 	for link := 0; link < nvidia.NVLINK_MAX_LINKS; link++ {
 		state, ret := device.GetNvLinkState(link)
-		if !ok(ret) || state != nvidia.FEATURE_ENABLED {
+		if !ok(ret) {
+			totals.failedLinks |= nvlinkLink(link)
+			continue
+		}
+		if state != nvidia.FEATURE_ENABLED {
 			continue
 		}
 
+		totals.links |= nvlinkLink(link)
 		values := []nvidia.FieldValue{
 			{FieldId: nvidia.FI_DEV_NVLINK_COUNT_XMIT_BYTES, ScopeId: uint32(link)},
 			{FieldId: nvidia.FI_DEV_NVLINK_COUNT_RCV_BYTES, ScopeId: uint32(link)},
@@ -135,9 +143,12 @@ func readNVLinkTotals(device nvidia.Device, at time.Time) (nvlinkTotals, bool) {
 		}
 		totals.tx += tx
 		totals.rx += rx
-		found = true
 	}
-	return totals, found
+	return totals, true
+}
+
+func nvlinkLink(link int) nvlinkLinkSet {
+	return nvlinkLinkSet(1) << uint(link)
 }
 
 func unsignedFieldValue(value nvidia.FieldValue) (uint64, bool) {
@@ -158,6 +169,9 @@ func unsignedFieldValue(value nvidia.FieldValue) (uint64, bool) {
 }
 
 func applyNVLinkDelta(sample *gpu.DeviceSample, previous, current nvlinkTotals) {
+	if current.links == 0 || previous.links != current.links {
+		return
+	}
 	elapsed := current.at.Sub(previous.at).Seconds()
 	if elapsed <= 0 || current.tx < previous.tx || current.rx < previous.rx {
 		return
