@@ -334,6 +334,36 @@ func TestRenderTensorWallDropsSecondaryContextBeforePrimaryBlocks(t *testing.T) 
 	}
 }
 
+func TestRenderTensorWallUsesBodyBudgetToFitAllGPUs(t *testing.T) {
+	model := NewModel(Options{NoColor: true})
+	snapshot := snapshotWithDevices(4)
+	snapshot.Source = gpu.SourceNVMLDCGM
+	for i := range snapshot.Devices {
+		snapshot.Devices[i].Name = "H100-SXM5"
+		snapshot.Devices[i].SMActivePct = gpu.Some(float64(80 - i))
+		snapshot.Devices[i].TensorActivePct = gpu.Some(float64(90 - i*3))
+		snapshot.Devices[i].MemPipeActivePct = gpu.Some(float64(70 - i*3))
+		snapshot.Devices[i].FP32ActivePct = gpu.Some(float64(20 - i))
+	}
+	model, _ = updateModel(model, SnapshotMsg(snapshot))
+	model, _ = updateModel(model, tea.WindowSizeMsg{Width: 100, Height: 40})
+	model, _ = updateModel(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+
+	view := model.View()
+	lines := strings.Split(view, "\n")
+	if len(lines) > model.height {
+		t.Fatalf("tensor wall line count = %d, want <= %d:\n%s", len(lines), model.height, view)
+	}
+	for _, want := range []string{"GPU 0", "GPU 1", "GPU 2", "GPU 3", "Tensor Pipe 81%", "DRAM 61%", "source NVML+DCGM"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("body-budget tensor wall missing %q in:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "...") {
+		t.Fatalf("body-budget tensor wall overflowed despite enough height:\n%s", view)
+	}
+}
+
 func TestRenderTensorWallExactFitShowsPrimaryBlockBeforeOverflowMarker(t *testing.T) {
 	model := NewModel(Options{NoColor: true})
 	snapshot := snapshotWithTensorActivity()

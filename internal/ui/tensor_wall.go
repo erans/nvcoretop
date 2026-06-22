@@ -35,8 +35,7 @@ func (m Model) renderTensorWall(lineBudget int) string {
 	}
 
 	heatWidth := tensorHeatmapWidth(m.width)
-	heatHeight := tensorHeatmapHeight(m.height, len(devices))
-	includeContext := tensorWallIncludeSecondaryContext(lineBudget, len(devices), heatHeight)
+	heatHeight, includeContext := tensorWallLayout(lineBudget, m.height, len(devices))
 	for i, device := range devices {
 		block := renderTensorGPUBlockStyled(device, m.snapshot.Source, m.width, heatWidth, heatHeight, st, noColor, includeContext)
 		separatorLines := 0
@@ -144,11 +143,21 @@ func renderTensorGPUBlockStyled(device gpu.DeviceSample, source gpu.Source, widt
 	return lines
 }
 
-func tensorWallIncludeSecondaryContext(lineBudget, gpuCount, heatHeight int) bool {
-	if lineBudget < 0 || gpuCount <= 0 {
-		return true
+func tensorWallLayout(lineBudget, height, gpuCount int) (int, bool) {
+	if lineBudget < 0 {
+		return tensorHeatmapHeight(height, gpuCount), true
 	}
-	return tensorWallLineNeed(gpuCount, heatHeight, true) <= lineBudget
+	for heatHeight := maxTensorHeatmapHeight; heatHeight >= minTensorHeatmapHeight; heatHeight-- {
+		if tensorWallLineNeed(gpuCount, heatHeight, true) <= lineBudget {
+			return heatHeight, true
+		}
+	}
+	for heatHeight := maxTensorHeatmapHeight; heatHeight >= minTensorHeatmapHeight; heatHeight-- {
+		if tensorWallLineNeed(gpuCount, heatHeight, false) <= lineBudget {
+			return heatHeight, false
+		}
+	}
+	return minTensorHeatmapHeight, false
 }
 
 func tensorWallLineNeed(gpuCount, heatHeight int, includeContext bool) int {
