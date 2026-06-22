@@ -72,6 +72,9 @@ func optionalUint32Desc(left, right gpu.Optional[uint32], leftIndex, rightIndex 
 	if left.OK != right.OK {
 		return left.OK
 	}
+	if !left.OK {
+		return leftIndex < rightIndex
+	}
 	if left.Value == right.Value {
 		return leftIndex < rightIndex
 	}
@@ -81,6 +84,9 @@ func optionalUint32Desc(left, right gpu.Optional[uint32], leftIndex, rightIndex 
 func optionalFloatDesc(left, right gpu.Optional[float64], leftIndex, rightIndex int) bool {
 	if left.OK != right.OK {
 		return left.OK
+	}
+	if !left.OK {
+		return leftIndex < rightIndex
 	}
 	if left.Value == right.Value {
 		return leftIndex < rightIndex
