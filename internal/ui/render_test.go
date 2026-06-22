@@ -251,6 +251,45 @@ func TestRenderTensorWallLineBudgetPreservesFooterHelpAndOverflow(t *testing.T) 
 	}
 }
 
+func TestRenderTensorWallExactFitShowsGPUBlockBeforeOverflow(t *testing.T) {
+	model := NewModel(Options{NoColor: true})
+	snapshot := snapshotWithTensorActivity()
+	snapshot.Devices = snapshot.Devices[:2]
+	model, _ = updateModel(model, SnapshotMsg(snapshot))
+	model, _ = updateModel(model, tea.WindowSizeMsg{Width: 100, Height: 8})
+	model, _ = updateModel(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+
+	view := model.View()
+	lines := strings.Split(view, "\n")
+	if len(lines) > model.height {
+		t.Fatalf("tensor wall line count = %d, want <= %d:\n%s", len(lines), model.height, view)
+	}
+	for _, want := range []string{"Tensor/DRAM Activity Wall", "GPU 0", "Tensor Pipe 92%", "DRAM 71%", "source NVML+DCGM"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("exact-fit tensor wall missing %q in:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "... 2 more GPU(s)") {
+		t.Fatalf("exact-fit tensor wall replaced fitting GPU block with overflow:\n%s", view)
+	}
+}
+
+func TestRenderTensorWallHelpLabel(t *testing.T) {
+	model := NewModel(Options{NoColor: true})
+	model, _ = updateModel(model, SnapshotMsg(snapshotWithTensorActivity()))
+	model, _ = updateModel(model, tea.WindowSizeMsg{Width: 100, Height: 20})
+	model, _ = updateModel(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	model, _ = updateModel(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+
+	view := model.View()
+	if !strings.Contains(view, "t toggle wall | o overview") {
+		t.Fatalf("tensor wall help missing toggle label in:\n%s", view)
+	}
+	if strings.Contains(view, "t overview | o overview") {
+		t.Fatalf("tensor wall help contains ambiguous overview label in:\n%s", view)
+	}
+}
+
 func TestTensorGPUBlockClampsDisplayedTensorAndDRAMPercentages(t *testing.T) {
 	device := gpu.DeviceSample{
 		Index:            7,

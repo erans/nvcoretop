@@ -23,7 +23,7 @@ func (m Model) View() string {
 		footer := truncateRunes(m.renderFooter(), m.width)
 		help := ""
 		if m.help {
-			help = truncateRunes("keys: t overview | o overview | s sort | p pause | ? help | q quit", m.width)
+			help = truncateRunes("keys: t toggle wall | o overview | s sort | p pause | ? help | q quit", m.width)
 		}
 		bodyBudget := -1
 		if m.height > 0 {
