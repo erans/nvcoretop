@@ -2,12 +2,15 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"nvcoretop/internal/gpu"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+var ErrInvalidInterval = errors.New("ui interval must be positive")
 
 type sampleTickMsg struct{}
 
@@ -19,6 +22,10 @@ type runnerModel struct {
 }
 
 func Run(ctx context.Context, sampler gpu.Sampler, interval time.Duration, options Options) error {
+	if interval <= 0 {
+		return ErrInvalidInterval
+	}
+
 	model := runnerModel{
 		Model:    NewModel(options),
 		ctx:      ctx,
@@ -45,12 +52,20 @@ func (m runnerModel) Init() tea.Cmd {
 }
 
 func (m runnerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg.(type) {
+	switch msg := msg.(type) {
 	case sampleTickMsg:
-		return m, tea.Batch(
-			sampleCmd(m.ctx, m.sampler, m.paused),
-			sampleTickCmd(m.interval),
-		)
+		if m.paused {
+			return m, sampleTickCmd(m.interval)
+		}
+		return m, sampleCmd(m.ctx, m.sampler, false)
+	case SnapshotMsg:
+		next, cmd := updateModel(m.Model, msg)
+		m.Model = next
+		return m, tea.Sequence(cmd, sampleTickCmd(m.interval))
+	case ErrMsg:
+		next, cmd := updateModel(m.Model, msg)
+		m.Model = next
+		return m, tea.Sequence(cmd, sampleTickCmd(m.interval))
 	default:
 		next, cmd := updateModel(m.Model, msg)
 		m.Model = next

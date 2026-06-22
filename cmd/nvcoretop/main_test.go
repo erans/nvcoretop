@@ -84,6 +84,9 @@ func TestRunDefaultModeDispatchesTUI(t *testing.T) {
 		if !options.NoColor {
 			t.Fatalf("options.NoColor = false, want true")
 		}
+		if !options.ForceDCGMView {
+			t.Fatalf("options.ForceDCGMView = false, want true")
+		}
 
 		snapshot, err := sampler.Sample(ctx)
 		if err != nil {
@@ -95,7 +98,7 @@ func TestRunDefaultModeDispatchesTUI(t *testing.T) {
 		return nil
 	}
 
-	if err := run([]string{"--interval", "250ms", "--no-color"}, &stdout, &stderr); err != nil {
+	if err := run([]string{"--interval", "250ms", "--no-color", "--dcgm"}, &stdout, &stderr); err != nil {
 		t.Fatalf("run error = %v", err)
 	}
 

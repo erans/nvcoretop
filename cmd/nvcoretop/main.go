@@ -78,8 +78,9 @@ func run(args []string, stdout, stderr io.Writer) (err error) {
 		}})
 		defer sampler.Close()
 		return runTUI(context.Background(), sampler, cfg.Interval, ui.Options{
-			Interval: cfg.Interval.String(),
-			NoColor:  cfg.NoColor,
+			Interval:      cfg.Interval.String(),
+			NoColor:       cfg.NoColor,
+			ForceDCGMView: cfg.DCGM,
 		})
 	}
 }
