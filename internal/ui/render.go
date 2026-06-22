@@ -15,6 +15,14 @@ func (m Model) View() string {
 	if m.err != nil {
 		parts = append(parts, "error: "+m.err.Error())
 	}
+	if m.view == viewTensorWall {
+		parts = append(parts, m.renderTensorWall())
+		parts = append(parts, m.renderFooter())
+		if m.help {
+			parts = append(parts, "keys: t overview | o overview | s sort | p pause | ? help | q quit")
+		}
+		return strings.Join(parts, "\n")
+	}
 	if degraded {
 		parts = append(parts, m.renderDegraded())
 	} else {
@@ -29,7 +37,7 @@ func (m Model) View() string {
 	}
 	parts = append(parts, m.renderFooter())
 	if m.help {
-		parts = append(parts, "keys: up/down/j/k select | enter/tab detail | s sort | d dcgm | p pause | ? help | q quit")
+		parts = append(parts, "keys: up/down/j/k select | enter/tab detail | s sort | d dcgm | t tensor wall | o overview | p pause | ? help | q quit")
 	}
 	return strings.Join(parts, "\n")
 }

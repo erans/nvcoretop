@@ -134,3 +134,106 @@ func TestRenderDegradedDetailLongNameWidthBounded(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderTensorWallNoColorMultipleGPUs(t *testing.T) {
+	model := NewModel(Options{NoColor: true})
+	model, _ = updateModel(model, SnapshotMsg(snapshotWithTensorActivity()))
+	model, _ = updateModel(model, tea.WindowSizeMsg{Width: 120, Height: 40})
+	model, _ = updateModel(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+
+	view := model.View()
+	for _, want := range []string{
+		"Tensor/DRAM Activity Wall",
+		"GPU 0",
+		"GPU 1",
+		"GPU 2",
+		"Tensor Pipe 92%",
+		"DRAM 71%",
+		"SM 84%",
+		"FP32 33%",
+		"Tensor Pipe unavailable",
+		"DRAM 15%",
+		"source NVML+DCGM",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("tensor wall missing %q in:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "\x1b[") {
+		t.Fatalf("no-color tensor wall contains ANSI escapes: %q", view)
+	}
+}
+
+func TestRenderTensorWallEmptySnapshot(t *testing.T) {
+	model := NewModel(Options{NoColor: true})
+	model, _ = updateModel(model, tea.WindowSizeMsg{Width: 100, Height: 20})
+	model, _ = updateModel(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+
+	view := model.View()
+	for _, want := range []string{"Tensor/DRAM Activity Wall", "waiting for GPU samples"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("empty tensor wall missing %q in:\n%s", want, view)
+		}
+	}
+}
+
+func TestRenderTensorWallLineWidthBoundedNoColor(t *testing.T) {
+	model := NewModel(Options{NoColor: true})
+	snapshot := snapshotWithTensorActivity()
+	for i := range snapshot.Devices {
+		snapshot.Devices[i].Name = "NVIDIA H100 SXM5 80GB Very Long Engineering Sample Name"
+	}
+	model, _ = updateModel(model, SnapshotMsg(snapshot))
+	model, _ = updateModel(model, tea.WindowSizeMsg{Width: 72, Height: 24})
+	model, _ = updateModel(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+
+	view := model.View()
+	lines := strings.Split(view, "\n")
+	if len(lines) > model.height {
+		t.Fatalf("tensor wall line count = %d, want <= %d:\n%s", len(lines), model.height, view)
+	}
+	for _, line := range lines {
+		if got := utf8.RuneCountInString(line); got > model.width {
+			t.Fatalf("tensor wall line length = %d, want <= %d:\n%s", got, model.width, view)
+		}
+	}
+}
+
+func snapshotWithTensorActivity() gpu.Snapshot {
+	snapshot := snapshotWithDevices(3)
+	snapshot.Source = gpu.SourceNVMLDCGM
+
+	snapshot.Devices[0].Name = "H100-SXM5"
+	snapshot.Devices[0].MemUsed = 48 * 1024 * 1024 * 1024
+	snapshot.Devices[0].MemTotal = 80 * 1024 * 1024 * 1024
+	snapshot.Devices[0].GPUUtil = gpu.Some(uint32(89))
+	snapshot.Devices[0].MemUtil = gpu.Some(uint32(61))
+	snapshot.Devices[0].TempC = gpu.Some(uint32(66))
+	snapshot.Devices[0].SMActivePct = gpu.Some(84.0)
+	snapshot.Devices[0].TensorActivePct = gpu.Some(92.0)
+	snapshot.Devices[0].MemPipeActivePct = gpu.Some(71.0)
+	snapshot.Devices[0].FP32ActivePct = gpu.Some(33.0)
+
+	snapshot.Devices[1].Name = "H100-SXM5"
+	snapshot.Devices[1].MemUsed = 32 * 1024 * 1024 * 1024
+	snapshot.Devices[1].MemTotal = 80 * 1024 * 1024 * 1024
+	snapshot.Devices[1].GPUUtil = gpu.Some(uint32(62))
+	snapshot.Devices[1].MemUtil = gpu.Some(uint32(44))
+	snapshot.Devices[1].TempC = gpu.Some(uint32(58))
+	snapshot.Devices[1].SMActivePct = gpu.Some(68.0)
+	snapshot.Devices[1].TensorActivePct = gpu.Some(63.0)
+	snapshot.Devices[1].MemPipeActivePct = gpu.Some(51.0)
+	snapshot.Devices[1].FP32ActivePct = gpu.Some(21.0)
+
+	snapshot.Devices[2].Name = "H100-SXM5"
+	snapshot.Devices[2].MemUsed = 12 * 1024 * 1024 * 1024
+	snapshot.Devices[2].MemTotal = 80 * 1024 * 1024 * 1024
+	snapshot.Devices[2].GPUUtil = gpu.Some(uint32(18))
+	snapshot.Devices[2].MemUtil = gpu.Some(uint32(20))
+	snapshot.Devices[2].TempC = gpu.Some(uint32(52))
+	snapshot.Devices[2].SMActivePct = gpu.Some(19.0)
+	snapshot.Devices[2].MemPipeActivePct = gpu.Some(15.0)
+	snapshot.Devices[2].FP32ActivePct = gpu.Some(8.0)
+
+	return snapshot
+}
