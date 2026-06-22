@@ -77,31 +77,71 @@ func TestNewCreatesNVMLSamplerWithDCGMEnricher(t *testing.T) {
 }
 
 func TestNewClosesBaseSamplerOnDCGMError(t *testing.T) {
-	base := &factoryTestSampler{deviceCount: 1}
-	want := errors.New("dcgm failed")
+	baseCloseErr := errors.New("base close failed")
+	base := &factoryTestSampler{deviceCount: 1, closeErr: baseCloseErr}
+	dcgmErr := errors.New("dcgm failed")
 
 	useFactoryDependencies(t,
 		func(nvml.Options) (gpu.Sampler, error) {
 			return base, nil
 		},
 		func(bool, int) (gpu.Enricher, error) {
-			return nil, want
+			return nil, dcgmErr
 		},
 	)
 
 	_, err := New(Options{})
-	if !errors.Is(err, want) {
-		t.Fatalf("New error = %v, want %v", err, want)
+	if !errors.Is(err, dcgmErr) {
+		t.Fatalf("New error = %v, want %v", err, dcgmErr)
+	}
+	if !errors.Is(err, baseCloseErr) {
+		t.Fatalf("New error = %v, want %v", err, baseCloseErr)
 	}
 	if !base.closed {
 		t.Fatalf("base sampler was not closed")
 	}
 }
 
+func TestNewClosesEnricherOnBaseCloseFailure(t *testing.T) {
+	baseCloseErr := errors.New("base close failed")
+	enricherCloseErr := errors.New("enricher close failed")
+	base := &factoryTestSampler{deviceCount: 1, closeErr: baseCloseErr}
+	enricher := &factoryTestEnricher{closeErr: enricherCloseErr}
+	call := 0
+
+	useFactoryDependencies(t,
+		func(options nvml.Options) (gpu.Sampler, error) {
+			call++
+			if call > 1 || options.Enricher != nil {
+				t.Fatalf("second NVML creation occurred after base close failure")
+			}
+			return base, nil
+		},
+		func(bool, int) (gpu.Enricher, error) {
+			return enricher, nil
+		},
+	)
+
+	_, err := New(Options{})
+	if !errors.Is(err, baseCloseErr) {
+		t.Fatalf("New error = %v, want %v", err, baseCloseErr)
+	}
+	if !errors.Is(err, enricherCloseErr) {
+		t.Fatalf("New error = %v, want %v", err, enricherCloseErr)
+	}
+	if !base.closed {
+		t.Fatalf("base sampler was not closed")
+	}
+	if !enricher.closed {
+		t.Fatalf("enricher was not closed")
+	}
+}
+
 func TestNewClosesEnricherOnSecondNVMLFailure(t *testing.T) {
 	base := &factoryTestSampler{deviceCount: 1}
-	enricher := &factoryTestEnricher{}
-	want := errors.New("second nvml failed")
+	enricherCloseErr := errors.New("enricher close failed")
+	enricher := &factoryTestEnricher{closeErr: enricherCloseErr}
+	nvmlErr := errors.New("second nvml failed")
 	call := 0
 
 	useFactoryDependencies(t,
@@ -110,7 +150,7 @@ func TestNewClosesEnricherOnSecondNVMLFailure(t *testing.T) {
 			if call == 1 {
 				return base, nil
 			}
-			return nil, want
+			return nil, nvmlErr
 		},
 		func(bool, int) (gpu.Enricher, error) {
 			return enricher, nil
@@ -118,8 +158,11 @@ func TestNewClosesEnricherOnSecondNVMLFailure(t *testing.T) {
 	)
 
 	_, err := New(Options{})
-	if !errors.Is(err, want) {
-		t.Fatalf("New error = %v, want %v", err, want)
+	if !errors.Is(err, nvmlErr) {
+		t.Fatalf("New error = %v, want %v", err, nvmlErr)
+	}
+	if !errors.Is(err, enricherCloseErr) {
+		t.Fatalf("New error = %v, want %v", err, enricherCloseErr)
 	}
 	if !base.closed {
 		t.Fatalf("base sampler was not closed")
@@ -149,6 +192,7 @@ func useFactoryDependencies(
 type factoryTestSampler struct {
 	deviceCount int
 	closed      bool
+	closeErr    error
 }
 
 func (s *factoryTestSampler) Sample(context.Context) (gpu.Snapshot, error) {
@@ -161,12 +205,13 @@ func (s *factoryTestSampler) DeviceCount() int {
 
 func (s *factoryTestSampler) Close() error {
 	s.closed = true
-	return nil
+	return s.closeErr
 }
 
 type factoryTestEnricher struct {
-	notice string
-	closed bool
+	notice   string
+	closed   bool
+	closeErr error
 }
 
 func (e *factoryTestEnricher) Enrich(_ context.Context, snapshot gpu.Snapshot) (gpu.Snapshot, error) {
@@ -183,5 +228,5 @@ func (e *factoryTestEnricher) Notice() string {
 
 func (e *factoryTestEnricher) Close() error {
 	e.closed = true
-	return nil
+	return e.closeErr
 }

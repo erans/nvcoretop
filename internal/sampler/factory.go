@@ -1,6 +1,7 @@
 package sampler
 
 import (
+	"errors"
 	"time"
 
 	"nvcoretop/internal/gpu"
@@ -31,20 +32,20 @@ func New(options Options) (Result, error) {
 		return Result{}, err
 	}
 
-	enricher, err := newDCGM(options.ForceDCGM, base.DeviceCount())
-	if err != nil {
-		_ = base.Close()
-		return Result{}, err
+	enricher, dcgmErr := newDCGM(options.ForceDCGM, base.DeviceCount())
+	if dcgmErr != nil {
+		return Result{}, errors.Join(dcgmErr, base.Close())
 	}
-	_ = base.Close()
+	if closeErr := base.Close(); closeErr != nil {
+		return Result{}, errors.Join(closeErr, enricher.Close())
+	}
 
 	created, err := newNVML(nvml.Options{
 		Now:      options.Now,
 		Enricher: enricher,
 	})
 	if err != nil {
-		_ = enricher.Close()
-		return Result{}, err
+		return Result{}, errors.Join(err, enricher.Close())
 	}
 	return Result{Sampler: created, Notice: enricher.Notice()}, nil
 }
