@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -196,6 +197,107 @@ func TestRenderTensorWallLineWidthBoundedNoColor(t *testing.T) {
 		if got := utf8.RuneCountInString(line); got > model.width {
 			t.Fatalf("tensor wall line length = %d, want <= %d:\n%s", got, model.width, view)
 		}
+	}
+}
+
+func TestRenderTensorWallLineBudgetPreservesFooterHelpAndOverflow(t *testing.T) {
+	model := NewModel(Options{NoColor: true, Interval: "500ms"})
+	snapshot := snapshotWithDevices(10)
+	snapshot.Source = gpu.SourceNVMLDCGM
+	for i := range snapshot.Devices {
+		snapshot.Devices[i].Name = "H100-SXM5"
+		snapshot.Devices[i].SMActivePct = gpu.Some(float64(80 - i))
+		snapshot.Devices[i].TensorActivePct = gpu.Some(float64(90 - i))
+		snapshot.Devices[i].MemPipeActivePct = gpu.Some(float64(70 - i))
+		snapshot.Devices[i].FP32ActivePct = gpu.Some(float64(30 - i))
+	}
+	model, _ = updateModel(model, SnapshotMsg(snapshot))
+	model, _ = updateModel(model, tea.WindowSizeMsg{Width: 78, Height: 12})
+	model, _ = updateModel(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	model, _ = updateModel(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	model, _ = updateModel(model, ErrMsg{Err: errors.New("poll failed")})
+
+	view := model.View()
+	lines := strings.Split(view, "\n")
+	if len(lines) > model.height {
+		t.Fatalf("tensor wall line count = %d, want <= %d:\n%s", len(lines), model.height, view)
+	}
+	if lines[0] != "error: poll failed" {
+		t.Fatalf("first line = %q, want error line in:\n%s", lines[0], view)
+	}
+	if !strings.Contains(view, "... 9 more GPU(s)") {
+		t.Fatalf("tensor wall missing overflow line in:\n%s", view)
+	}
+	if !strings.Contains(lines[len(lines)-2], "interval 500ms") || !strings.Contains(lines[len(lines)-2], "source NVML+DCGM") {
+		t.Fatalf("footer not preserved before help in:\n%s", view)
+	}
+	if !strings.Contains(lines[len(lines)-1], "keys:") {
+		t.Fatalf("help not preserved as last line in:\n%s", view)
+	}
+}
+
+func TestTensorGPUBlockClampsDisplayedTensorAndDRAMPercentages(t *testing.T) {
+	device := gpu.DeviceSample{
+		Index:            7,
+		Name:             "H100-SXM5",
+		TensorActivePct:  gpu.Some(125.0),
+		MemPipeActivePct: gpu.Some(-12.0),
+	}
+
+	block := strings.Join(renderTensorGPUBlock(device, gpu.SourceNVMLDCGM, 80, 8, 1), "\n")
+	for _, want := range []string{"Tensor Pipe 100%", "DRAM 0%", "████████", "░░░░░░░░"} {
+		if !strings.Contains(block, want) {
+			t.Fatalf("tensor block missing %q in:\n%s", want, block)
+		}
+	}
+	for _, unwanted := range []string{"125%", "-12%", "MemPipe"} {
+		if strings.Contains(block, unwanted) {
+			t.Fatalf("tensor block contains %q in:\n%s", unwanted, block)
+		}
+	}
+}
+
+func TestTensorGPUBlockRendersDRAMUnavailableIndependently(t *testing.T) {
+	device := snapshotWithTensorActivity().Devices[0]
+	device.MemPipeActivePct = gpu.Optional[float64]{}
+
+	block := strings.Join(renderTensorGPUBlock(device, gpu.SourceNVMLDCGM, 100, 12, 1), "\n")
+	for _, want := range []string{"Tensor Pipe 92%", "DRAM unavailable (DCGM field missing)"} {
+		if !strings.Contains(block, want) {
+			t.Fatalf("tensor block missing %q in:\n%s", want, block)
+		}
+	}
+	if strings.Contains(block, "MemPipe") {
+		t.Fatalf("tensor block contains visible MemPipe label in:\n%s", block)
+	}
+}
+
+func TestTensorHeatmapRowsClampOutOfRangeValues(t *testing.T) {
+	if got := strings.Join(tensorHeatmapRows(gpu.Some(125.0), 5, 2), "\n"); got != "█████\n█████" {
+		t.Fatalf("high clamp heatmap = %q, want full rows", got)
+	}
+	if got := strings.Join(tensorHeatmapRows(gpu.Some(-5.0), 5, 1), "\n"); got != "░░░░░" {
+		t.Fatalf("low clamp heatmap = %q, want empty row", got)
+	}
+}
+
+func TestRenderTensorWallUsesSortOrder(t *testing.T) {
+	model := NewModel(Options{NoColor: true})
+	snapshot := snapshotWithTensorActivity()
+	snapshot.Devices[0].GPUUtil = gpu.Some(uint32(10))
+	snapshot.Devices[1].GPUUtil = gpu.Some(uint32(90))
+	snapshot.Devices[2].GPUUtil = gpu.Some(uint32(50))
+	model, _ = updateModel(model, SnapshotMsg(snapshot))
+	model, _ = updateModel(model, tea.WindowSizeMsg{Width: 120, Height: 40})
+	model, _ = updateModel(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
+	model, _ = updateModel(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+
+	view := model.View()
+	first := strings.Index(view, "GPU 1")
+	second := strings.Index(view, "GPU 2")
+	third := strings.Index(view, "GPU 0")
+	if first == -1 || second == -1 || third == -1 || !(first < second && second < third) {
+		t.Fatalf("tensor wall GPU order not sorted by util in:\n%s", view)
 	}
 }
 

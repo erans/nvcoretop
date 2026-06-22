@@ -16,10 +16,28 @@ func (m Model) View() string {
 		parts = append(parts, "error: "+m.err.Error())
 	}
 	if m.view == viewTensorWall {
-		parts = append(parts, m.renderTensorWall())
-		parts = append(parts, m.renderFooter())
+		footer := m.renderFooter()
+		help := ""
 		if m.help {
-			parts = append(parts, "keys: t overview | o overview | s sort | p pause | ? help | q quit")
+			help = "keys: t overview | o overview | s sort | p pause | ? help | q quit"
+		}
+		bodyBudget := -1
+		if m.height > 0 {
+			bodyBudget = m.height - renderedLineCount(parts) - 1
+			if help != "" {
+				bodyBudget--
+			}
+			if bodyBudget < 0 {
+				bodyBudget = 0
+			}
+		}
+		body := m.renderTensorWall(bodyBudget)
+		if body != "" {
+			parts = append(parts, body)
+		}
+		parts = append(parts, footer)
+		if help != "" {
+			parts = append(parts, help)
 		}
 		return strings.Join(parts, "\n")
 	}
@@ -235,4 +253,12 @@ func truncateLines(value string, width int) string {
 		lines[i] = truncateRunes(line, width)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func renderedLineCount(parts []string) int {
+	count := 0
+	for _, part := range parts {
+		count += len(strings.Split(part, "\n"))
+	}
+	return count
 }

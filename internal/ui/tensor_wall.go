@@ -13,10 +13,17 @@ const (
 	maxTensorHeatmapHeight = 6
 )
 
-func (m Model) renderTensorWall() string {
+func (m Model) renderTensorWall(lineBudget int) string {
+	if lineBudget == 0 {
+		return ""
+	}
 	devices := SortDevices(m.snapshot.Devices, m.sort)
+	unlimited := lineBudget < 0
 	lines := []string{truncateRunes("Tensor/DRAM Activity Wall", m.width)}
 	if len(devices) == 0 {
+		if !unlimited && len(lines) >= lineBudget {
+			return strings.Join(lines, "\n")
+		}
 		lines = append(lines, truncateRunes("waiting for GPU samples...", m.width))
 		return strings.Join(lines, "\n")
 	}
@@ -24,10 +31,26 @@ func (m Model) renderTensorWall() string {
 	heatWidth := tensorHeatmapWidth(m.width)
 	heatHeight := tensorHeatmapHeight(m.height, len(devices))
 	for i, device := range devices {
+		block := renderTensorGPUBlock(device, m.snapshot.Source, m.width, heatWidth, heatHeight)
+		separatorLines := 0
 		if i > 0 {
+			separatorLines = 1
+		}
+		neededLines := separatorLines + len(block)
+		remainingDevices := len(devices) - i
+		if !unlimited {
+			availableLines := lineBudget - len(lines)
+			if neededLines > availableLines || (remainingDevices > 1 && neededLines == availableLines) {
+				if availableLines > 0 {
+					lines = append(lines, truncateRunes(fmt.Sprintf("... %d more GPU(s)", remainingDevices), m.width))
+				}
+				break
+			}
+		}
+		if separatorLines > 0 {
 			lines = append(lines, "")
 		}
-		lines = append(lines, renderTensorGPUBlock(device, m.snapshot.Source, m.width, heatWidth, heatHeight)...)
+		lines = append(lines, block...)
 	}
 	return strings.Join(lines, "\n")
 }
@@ -59,7 +82,7 @@ func appendActivityHeatmap(lines []string, label string, value gpu.Optional[floa
 	if !value.OK {
 		return append(lines, truncateRunes(fmt.Sprintf("  %s unavailable (DCGM field missing)", label), width))
 	}
-	lines = append(lines, truncateRunes(fmt.Sprintf("  %s %s", label, percentFloatText(value)), width))
+	lines = append(lines, truncateRunes(fmt.Sprintf("  %s %s", label, tensorPercentText(value)), width))
 	for _, row := range tensorHeatmapRows(value, heatWidth, heatHeight) {
 		lines = append(lines, truncateRunes("  "+row, width))
 	}
@@ -139,5 +162,12 @@ func tensorMetricSummary(label string, value gpu.Optional[float64]) string {
 	if !value.OK {
 		return label + " unavailable"
 	}
-	return fmt.Sprintf("%s %s", label, percentFloatText(value))
+	return fmt.Sprintf("%s %s", label, tensorPercentText(value))
+}
+
+func tensorPercentText(value gpu.Optional[float64]) string {
+	if !value.OK {
+		return "n/a"
+	}
+	return fmt.Sprintf("%.0f%%", clampFloat(value.Value, 0, 100))
 }
