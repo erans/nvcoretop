@@ -24,6 +24,16 @@ func useSamplerFactory(t *testing.T, factory func(sampler.Options) (sampler.Resu
 	})
 }
 
+func useRuntimeContext(t *testing.T, factory func() (context.Context, context.CancelFunc)) {
+	t.Helper()
+
+	original := newRuntimeContext
+	newRuntimeContext = factory
+	t.Cleanup(func() {
+		newRuntimeContext = original
+	})
+}
+
 func failOnSamplerFactory(t *testing.T) {
 	t.Helper()
 
@@ -109,6 +119,40 @@ func TestRunJSON(t *testing.T) {
 	}
 }
 
+func TestRunExportUsesRuntimeContext(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	fakeSampler := gpu.NewFakeSampler([]gpu.FakeStep{{
+		Snapshot: gpu.Snapshot{Timestamp: time.Unix(1, 0).UTC(), Source: gpu.SourceNVML},
+	}})
+	useSamplerFactory(t, func(sampler.Options) (sampler.Result, error) {
+		return sampler.Result{Sampler: fakeSampler}, nil
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	stopCalled := false
+	useRuntimeContext(t, func() (context.Context, context.CancelFunc) {
+		return ctx, func() { stopCalled = true }
+	})
+
+	err := run([]string{"--json", "--count", "1", "--interval", "1ms"}, &stdout, &stderr)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("run error = %v, want context.Canceled", err)
+	}
+	if !stopCalled {
+		t.Fatalf("runtime context stop was not called")
+	}
+	if _, err := fakeSampler.Sample(context.Background()); !errors.Is(err, gpu.ErrSamplerClosed) {
+		t.Fatalf("sampler.Sample after run error = %v, want ErrSamplerClosed", err)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
 func TestRunDefaultModeDispatchesTUI(t *testing.T) {
 	originalRunTUI := runTUI
 	defer func() {
@@ -172,6 +216,51 @@ func TestRunDefaultModeDispatchesTUI(t *testing.T) {
 		t.Fatalf("sampler.Sample after run error = %v, want ErrSamplerClosed", err)
 	}
 
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+type runtimeContextKey struct{}
+
+func TestRunDefaultModeUsesRuntimeContext(t *testing.T) {
+	originalRunTUI := runTUI
+	defer func() {
+		runTUI = originalRunTUI
+	}()
+
+	var stdout, stderr bytes.Buffer
+	fakeSampler := gpu.NewFakeSampler([]gpu.FakeStep{{
+		Snapshot: gpu.Snapshot{Source: gpu.SourceNVML},
+	}})
+	useSamplerFactory(t, func(sampler.Options) (sampler.Result, error) {
+		return sampler.Result{Sampler: fakeSampler}, nil
+	})
+
+	stopCalled := false
+	useRuntimeContext(t, func() (context.Context, context.CancelFunc) {
+		return context.WithValue(context.Background(), runtimeContextKey{}, "runtime"), func() { stopCalled = true }
+	})
+
+	runTUI = func(ctx context.Context, gpuSampler gpu.Sampler, interval time.Duration, options ui.Options) error {
+		if got := ctx.Value(runtimeContextKey{}); got != "runtime" {
+			t.Fatalf("ctx value = %v, want runtime", got)
+		}
+		return nil
+	}
+
+	if err := run([]string{"--interval", "250ms"}, &stdout, &stderr); err != nil {
+		t.Fatalf("run error = %v", err)
+	}
+	if !stopCalled {
+		t.Fatalf("runtime context stop was not called")
+	}
+	if _, err := fakeSampler.Sample(context.Background()); !errors.Is(err, gpu.ErrSamplerClosed) {
+		t.Fatalf("sampler.Sample after run error = %v, want ErrSamplerClosed", err)
+	}
 	if stdout.Len() != 0 {
 		t.Fatalf("stdout = %q, want empty", stdout.String())
 	}

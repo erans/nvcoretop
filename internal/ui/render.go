@@ -123,7 +123,7 @@ func (m Model) renderFooter() string {
 	if m.paused {
 		status = "paused"
 	}
-	return fmt.Sprintf("%s | sort %s | source %s", status, m.sort.String(), m.snapshot.Source.String())
+	return fmt.Sprintf("%s | interval %s | sort %s | source %s", status, m.options.Interval, m.sort.String(), m.snapshot.Source.String())
 }
 
 func utilCell(device gpu.DeviceSample) string {

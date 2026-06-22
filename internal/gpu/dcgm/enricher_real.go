@@ -95,6 +95,7 @@ type Client struct {
 	fieldGroup nvidia.FieldHandle
 	groups     []nvidia.GroupHandle
 	mode       string
+	forced     bool
 	active     bool
 	closed     bool
 	closeErr   error
@@ -125,6 +126,7 @@ func New(force bool, deviceCount int) (gpu.Enricher, error) {
 		cleanup:    cleanup,
 		fieldGroup: fieldGroup,
 		mode:       mode,
+		forced:     force,
 		active:     true,
 	}
 	for i := 0; i < deviceCount; i++ {
@@ -167,8 +169,15 @@ func (c *Client) Enrich(ctx context.Context, snapshot gpu.Snapshot) (gpu.Snapsho
 	if c.closed {
 		return snapshot, gpu.ErrSamplerClosed
 	}
+	if !c.active {
+		return snapshot, nil
+	}
 	if err := c.api.updateAllFields(); err != nil {
-		return snapshot, err
+		if c.forced {
+			return snapshot, err
+		}
+		c.active = false
+		return snapshot, nil
 	}
 
 	for i := range snapshot.Devices {
@@ -195,6 +204,9 @@ func (c *Client) Notice() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if !c.active {
+		return "DCGM unavailable; " + fallbackNotice
+	}
 	return "DCGM active (" + c.mode + ")"
 }
 

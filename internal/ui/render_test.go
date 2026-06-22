@@ -41,6 +41,20 @@ func TestRenderDetail(t *testing.T) {
 	}
 }
 
+func TestRenderFooterIncludesIntervalSortAndSource(t *testing.T) {
+	model := NewModel(Options{NoColor: true, Interval: "250ms"})
+	model, _ = updateModel(model, SnapshotMsg(snapshotWithDevices(1)))
+	model.width = 100
+	model.height = 30
+
+	view := model.View()
+	for _, want := range []string{"interval 250ms", "sort index", "source NVML"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("footer missing %q in:\n%s", want, view)
+		}
+	}
+}
+
 func TestRenderDegradedLayout(t *testing.T) {
 	model := NewModel(Options{NoColor: true})
 	model, _ = updateModel(model, SnapshotMsg(snapshotWithDevices(1)))

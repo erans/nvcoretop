@@ -47,7 +47,11 @@ func (e *CSVEncoder) Write(snapshot gpu.Snapshot) error {
 			row = append(row, field.Value(device).CSV)
 		}
 	}
-	return e.writer.Write(row)
+	if err := e.writer.Write(row); err != nil {
+		return err
+	}
+	e.writer.Flush()
+	return e.writer.Error()
 }
 
 func (e *CSVEncoder) Flush() error {

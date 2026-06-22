@@ -176,6 +176,65 @@ func TestRealEnrichRespectsContextCancellationBeforeDCGMWork(t *testing.T) {
 	}
 }
 
+func TestRealEnrichDegradesToNVMLWhenOptionalUpdateFails(t *testing.T) {
+	updateErr := errors.New("update failed")
+	api := &fakeDCGMAPI{updateErr: updateErr}
+	client := &Client{api: api, active: true}
+	snapshot := gpu.Snapshot{
+		Source:  gpu.SourceNVML,
+		Devices: []gpu.DeviceSample{{Index: 0, GPUUtil: gpu.Some(uint32(42))}},
+	}
+
+	got, err := client.Enrich(context.Background(), snapshot)
+	if err != nil {
+		t.Fatalf("Enrich() error = %v, want nil optional fallback", err)
+	}
+	if got.Source != gpu.SourceNVML {
+		t.Fatalf("Source = %s, want NVML after optional DCGM update failure", got.Source)
+	}
+	if got.Devices[0].GPUUtil != snapshot.Devices[0].GPUUtil {
+		t.Fatalf("snapshot device = %#v, want unchanged %#v", got.Devices[0], snapshot.Devices[0])
+	}
+	if client.Active() {
+		t.Fatalf("Active() = true, want false after optional update failure")
+	}
+	if api.updateCalls != 1 {
+		t.Fatalf("update calls = %d, want 1", api.updateCalls)
+	}
+
+	got, err = client.Enrich(context.Background(), snapshot)
+	if err != nil {
+		t.Fatalf("second Enrich() error = %v, want nil degraded fallback", err)
+	}
+	if got.Source != gpu.SourceNVML {
+		t.Fatalf("second Source = %s, want NVML", got.Source)
+	}
+	if api.updateCalls != 1 {
+		t.Fatalf("update calls after degraded Enrich = %d, want still 1", api.updateCalls)
+	}
+}
+
+func TestRealEnrichReturnsUpdateErrorWhenForced(t *testing.T) {
+	updateErr := errors.New("update failed")
+	api := &fakeDCGMAPI{updateErr: updateErr}
+	client := &Client{api: api, forced: true, active: true}
+	snapshot := gpu.Snapshot{
+		Source:  gpu.SourceNVML,
+		Devices: []gpu.DeviceSample{{Index: 0}},
+	}
+
+	got, err := client.Enrich(context.Background(), snapshot)
+	if !errors.Is(err, updateErr) {
+		t.Fatalf("Enrich() error = %v, want %v", err, updateErr)
+	}
+	if got.Source != gpu.SourceNVML {
+		t.Fatalf("Source = %s, want unchanged NVML on forced update error", got.Source)
+	}
+	if !client.Active() {
+		t.Fatalf("Active() = false, want forced DCGM to remain active after returned error")
+	}
+}
+
 func assertOptionalFloat(t *testing.T, name string, got gpu.Optional[float64], want float64) {
 	t.Helper()
 	if !got.OK {

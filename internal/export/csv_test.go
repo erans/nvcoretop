@@ -30,9 +30,6 @@ func TestCSVEncoderWritesHeaderAndRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Write error = %v", err)
 	}
-	if err := encoder.Flush(); err != nil {
-		t.Fatalf("Flush error = %v", err)
-	}
 
 	want := "ts,source,util_gpu0,temp_gpu0,power_gpu0,util_gpu1,temp_gpu1,power_gpu1\n2026-06-21T18:40:00Z,NVML,64,71,285.5,12,44,\n"
 	if got := buf.String(); got != want {
@@ -60,6 +57,9 @@ func TestCSVEncoderWritesStableWideLayoutAcrossWrites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first Write error = %v", err)
 	}
+	if got := strings.Count(buf.String(), "\n"); got != 2 {
+		t.Fatalf("newline count after first Write = %d, want header and first row flushed", got)
+	}
 
 	err = encoder.Write(gpu.Snapshot{
 		Timestamp: time.Date(2026, 6, 21, 18, 41, 0, 0, time.UTC),
@@ -70,10 +70,6 @@ func TestCSVEncoderWritesStableWideLayoutAcrossWrites(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("second Write error = %v", err)
-	}
-
-	if err := encoder.Flush(); err != nil {
-		t.Fatalf("Flush error = %v", err)
 	}
 
 	raw := buf.String()
@@ -132,13 +128,8 @@ func TestCSVEncoderPropagatesWriterErrors(t *testing.T) {
 			{Index: 0, GPUUtil: gpu.Some(uint32(64))},
 		},
 	})
-	if err != nil {
-		t.Fatalf("Write before flush error = %v", err)
-	}
-
-	err = encoder.Flush()
 	if !errors.Is(err, expectedErr) {
-		t.Fatalf("Flush error = %v, want %v", err, expectedErr)
+		t.Fatalf("Write error = %v, want %v", err, expectedErr)
 	}
 
 	err = encoder.Write(gpu.Snapshot{

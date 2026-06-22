@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"nvcoretop/internal/app"
 	"nvcoretop/internal/export"
@@ -18,6 +20,9 @@ var version = "dev"
 
 var runTUI = ui.Run
 var createSampler = sampler.New
+var newRuntimeContext = func() (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+}
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
@@ -48,6 +53,9 @@ func run(args []string, stdout, stderr io.Writer) (err error) {
 			format = export.FormatCSV
 		}
 
+		runCtx, stop := newRuntimeContext()
+		defer stop()
+
 		created, createErr := createSampler(sampler.Options{ForceDCGM: cfg.DCGM})
 		if createErr != nil {
 			return createErr
@@ -77,7 +85,7 @@ func run(args []string, stdout, stderr io.Writer) (err error) {
 			writer = file
 		}
 
-		return export.Run(context.Background(), created.Sampler, writer, export.Options{
+		return export.Run(runCtx, created.Sampler, writer, export.Options{
 			Format:   format,
 			Interval: cfg.Interval,
 			Duration: cfg.Duration,
@@ -85,6 +93,9 @@ func run(args []string, stdout, stderr io.Writer) (err error) {
 			Fields:   cfg.Fields,
 		})
 	default:
+		runCtx, stop := newRuntimeContext()
+		defer stop()
+
 		created, createErr := createSampler(sampler.Options{ForceDCGM: cfg.DCGM})
 		if createErr != nil {
 			return createErr
@@ -99,7 +110,7 @@ func run(args []string, stdout, stderr io.Writer) (err error) {
 				return printErr
 			}
 		}
-		return runTUI(context.Background(), created.Sampler, cfg.Interval, ui.Options{
+		return runTUI(runCtx, created.Sampler, cfg.Interval, ui.Options{
 			Interval:      cfg.Interval.String(),
 			NoColor:       cfg.NoColor,
 			ForceDCGMView: cfg.DCGM,

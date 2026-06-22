@@ -1,4 +1,18 @@
+# Binaries
 /nvcoretop
 /dist/
+*.exe
+*.test
+*.out
+
+# Go
 /coverage.out
-/*.test
+/vendor/
+go.work
+go.work.sum
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
