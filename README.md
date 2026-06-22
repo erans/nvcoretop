@@ -133,9 +133,13 @@ git push origin v0.1.0
 ```
 
 Pushing the tag runs the release workflow. The workflow verifies the project,
-builds a Linux amd64 binary with the tag injected into `nvcoretop --version`,
-packages `nvcoretop`, `README.md`, and `LICENSE`, then attaches the tarball and
-SHA256 checksum to the GitHub Release.
+builds a Linux amd64 binary with DCGM support and the tag injected into
+`nvcoretop --version`, packages `nvcoretop`, `README.md`, and `LICENSE`, then
+attaches the tarball and SHA256 checksum to the GitHub Release.
+
+The release binary can show real SM/Tensor/memory-pipe/FP32 activity when the
+host has the DCGM runtime available. Without DCGM at runtime, it falls back to
+NVML-only data unless `--dcgm` is forced.
 
 Release candidate tags such as `v0.1.0-rc1` or `v0.1.0-rc.1` are published as
 GitHub prereleases.

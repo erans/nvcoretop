@@ -77,7 +77,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           mkdir -p dist/nvcoretop_${VERSION}_linux_amd64
-          go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" \
+          go build -tags dcgm -trimpath -ldflags "-s -w -X main.version=${VERSION}" \
             -o "dist/nvcoretop_${VERSION}_linux_amd64/nvcoretop" \
             ./cmd/nvcoretop
           cp README.md LICENSE "dist/nvcoretop_${VERSION}_linux_amd64/"
