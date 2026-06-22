@@ -96,6 +96,9 @@ var fieldRegistry = map[string]Field{
 	"tensor_active": {Name: "tensor_active", Value: func(d gpu.DeviceSample) FieldValue {
 		return optionalFloat(d.TensorActivePct)
 	}},
+	"dram_active": {Name: "dram_active", Value: func(d gpu.DeviceSample) FieldValue {
+		return optionalFloat(d.MemPipeActivePct)
+	}},
 	"mem_pipe_active": {Name: "mem_pipe_active", Value: func(d gpu.DeviceSample) FieldValue {
 		return optionalFloat(d.MemPipeActivePct)
 	}},
@@ -111,7 +114,7 @@ var defaultFieldNames = []string{
 	"proc_count", "proc_mem",
 	"pcie_tx", "pcie_rx", "nvlink_tx", "nvlink_rx",
 	"ecc_sbe", "ecc_dbe",
-	"sm_active", "tensor_active", "mem_pipe_active", "fp32_active",
+	"sm_active", "tensor_active", "dram_active", "fp32_active",
 }
 
 func ResolveFields(names []string) ([]Field, error) {

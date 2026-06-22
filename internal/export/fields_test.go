@@ -19,7 +19,7 @@ func TestResolveFieldsDefault(t *testing.T) {
 		"proc_count", "proc_mem",
 		"pcie_tx", "pcie_rx", "nvlink_tx", "nvlink_rx",
 		"ecc_sbe", "ecc_dbe",
-		"sm_active", "tensor_active", "mem_pipe_active", "fp32_active",
+		"sm_active", "tensor_active", "dram_active", "fp32_active",
 	}
 	if len(fields) != len(want) {
 		t.Fatalf("default fields length = %d, want %d", len(fields), len(want))
@@ -27,6 +27,24 @@ func TestResolveFieldsDefault(t *testing.T) {
 	for i := range want {
 		if fields[i].Name != want[i] {
 			t.Fatalf("field[%d] = %q, want %q", i, fields[i].Name, want[i])
+		}
+	}
+}
+
+func TestResolveFieldsDRAMActiveAndLegacyMemPipeAlias(t *testing.T) {
+	fields, err := ResolveFields([]string{"dram_active", "mem_pipe_active"})
+	if err != nil {
+		t.Fatalf("ResolveFields DRAM fields error = %v", err)
+	}
+	sample := gpu.DeviceSample{MemPipeActivePct: gpu.Some(77.5)}
+
+	for i, want := range []string{"dram_active", "mem_pipe_active"} {
+		if fields[i].Name != want {
+			t.Fatalf("field[%d] = %q, want %q", i, fields[i].Name, want)
+		}
+		value := fields[i].Value(sample)
+		if value.JSON != 77.5 || value.CSV != "77.5" {
+			t.Fatalf("%s value = %#v, want 77.5", want, value)
 		}
 	}
 }

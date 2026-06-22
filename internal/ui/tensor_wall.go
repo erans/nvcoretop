@@ -36,8 +36,9 @@ func (m Model) renderTensorWall(lineBudget int) string {
 
 	heatWidth := tensorHeatmapWidth(m.width)
 	heatHeight := tensorHeatmapHeight(m.height, len(devices))
+	includeContext := tensorWallIncludeSecondaryContext(lineBudget, len(devices), heatHeight)
 	for i, device := range devices {
-		block := renderTensorGPUBlockStyled(device, m.snapshot.Source, m.width, heatWidth, heatHeight, st, noColor)
+		block := renderTensorGPUBlockStyled(device, m.snapshot.Source, m.width, heatWidth, heatHeight, st, noColor, includeContext)
 		separatorLines := 0
 		if i > 0 {
 			separatorLines = 1
@@ -63,10 +64,10 @@ func (m Model) renderTensorWall(lineBudget int) string {
 }
 
 func renderTensorGPUBlock(device gpu.DeviceSample, source gpu.Source, width, heatWidth, heatHeight int) []string {
-	return renderTensorGPUBlockStyled(device, source, width, heatWidth, heatHeight, styles(true), true)
+	return renderTensorGPUBlockStyled(device, source, width, heatWidth, heatHeight, styles(true), true, true)
 }
 
-func renderTensorGPUBlockStyled(device gpu.DeviceSample, source gpu.Source, width, heatWidth, heatHeight int, st palette, noColor bool) []string {
+func renderTensorGPUBlockStyled(device gpu.DeviceSample, source gpu.Source, width, heatWidth, heatHeight int, st palette, noColor, includeContext bool) []string {
 	name := truncateRunes(device.Name, tensorNameWidth(width))
 	tensorText := tensorMetricSummary("Tensor Pipe", device.TensorActivePct)
 	dramText := tensorMetricSummary("DRAM", device.MemPipeActivePct)
@@ -87,56 +88,84 @@ func renderTensorGPUBlockStyled(device gpu.DeviceSample, source gpu.Source, widt
 		},
 	}, width, noColor)
 
-	smText := percentFloatText(device.SMActivePct)
-	fp32Text := percentFloatText(device.FP32ActivePct)
-	utilText := percentText(device.GPUUtil)
-	memText := memCell(device)
-	tempText := tempCell(device)
-	sourceText := source.String()
-	context := renderBoundedStyledLine([]styledLinePart{
-		{text: "  "},
-		{text: "SM", render: func(text string) string { return styleMuted(text, st, noColor) }},
-		{text: " "},
-		{
-			text: smText,
-			render: func(text string) string {
-				return styleActivityText(text, device.SMActivePct, st, noColor)
+	lines := []string{header}
+	if includeContext {
+		smText := percentFloatText(device.SMActivePct)
+		fp32Text := percentFloatText(device.FP32ActivePct)
+		utilText := percentText(device.GPUUtil)
+		memText := memCell(device)
+		tempText := tempCell(device)
+		sourceText := source.String()
+		context := renderBoundedStyledLine([]styledLinePart{
+			{text: "  "},
+			{text: "SM", render: func(text string) string { return styleMuted(text, st, noColor) }},
+			{text: " "},
+			{
+				text: smText,
+				render: func(text string) string {
+					return styleActivityText(text, device.SMActivePct, st, noColor)
+				},
 			},
-		},
-		{text: "  "},
-		{text: "FP32", render: func(text string) string { return styleMuted(text, st, noColor) }},
-		{text: " "},
-		{
-			text: fp32Text,
-			render: func(text string) string {
-				return styleActivityText(text, device.FP32ActivePct, st, noColor)
+			{text: "  "},
+			{text: "FP32", render: func(text string) string { return styleMuted(text, st, noColor) }},
+			{text: " "},
+			{
+				text: fp32Text,
+				render: func(text string) string {
+					return styleActivityText(text, device.FP32ActivePct, st, noColor)
+				},
 			},
-		},
-		{text: "  "},
-		{text: "util", render: func(text string) string { return styleMuted(text, st, noColor) }},
-		{text: " "},
-		{
-			text: utilText,
-			render: func(text string) string {
-				return st.optionalActivity(percentFloat(device.GPUUtil), device.GPUUtil.OK).Render(text)
+			{text: "  "},
+			{text: "util", render: func(text string) string { return styleMuted(text, st, noColor) }},
+			{text: " "},
+			{
+				text: utilText,
+				render: func(text string) string {
+					return st.optionalActivity(percentFloat(device.GPUUtil), device.GPUUtil.OK).Render(text)
+				},
 			},
-		},
-		{text: "  "},
-		{text: "mem", render: func(text string) string { return styleMuted(text, st, noColor) }},
-		{text: " "},
-		{text: memText, render: func(text string) string { return styleMuted(text, st, noColor) }},
-		{text: "  "},
-		{text: "temp", render: func(text string) string { return styleMuted(text, st, noColor) }},
-		{text: " "},
-		{text: tempText, render: func(text string) string { return styleMuted(text, st, noColor) }},
-		{text: "  "},
-		{text: "source", render: func(text string) string { return styleMuted(text, st, noColor) }},
-		{text: " "},
-		{text: sourceText, render: func(text string) string { return styleMuted(text, st, noColor) }},
-	}, width, noColor)
-	lines := []string{header, context}
+			{text: "  "},
+			{text: "mem", render: func(text string) string { return styleMuted(text, st, noColor) }},
+			{text: " "},
+			{text: memText, render: func(text string) string { return styleMuted(text, st, noColor) }},
+			{text: "  "},
+			{text: "temp", render: func(text string) string { return styleMuted(text, st, noColor) }},
+			{text: " "},
+			{text: tempText, render: func(text string) string { return styleMuted(text, st, noColor) }},
+			{text: "  "},
+			{text: "source", render: func(text string) string { return styleMuted(text, st, noColor) }},
+			{text: " "},
+			{text: sourceText, render: func(text string) string { return styleMuted(text, st, noColor) }},
+		}, width, noColor)
+		lines = append(lines, context)
+	}
 	lines = appendActivityHeatmap(lines, "Tensor Pipe", device.TensorActivePct, width, heatWidth, heatHeight, st, noColor)
 	lines = appendActivityHeatmap(lines, "DRAM", device.MemPipeActivePct, width, heatWidth, heatHeight, st, noColor)
+	return lines
+}
+
+func tensorWallIncludeSecondaryContext(lineBudget, gpuCount, heatHeight int) bool {
+	if lineBudget < 0 || gpuCount <= 0 {
+		return true
+	}
+	return tensorWallLineNeed(gpuCount, heatHeight, true) <= lineBudget
+}
+
+func tensorWallLineNeed(gpuCount, heatHeight int, includeContext bool) int {
+	if gpuCount <= 0 {
+		return 1
+	}
+	return 1 + gpuCount*tensorGPUBlockLineCount(heatHeight, includeContext) + gpuCount - 1
+}
+
+func tensorGPUBlockLineCount(heatHeight int, includeContext bool) int {
+	if heatHeight < 1 {
+		heatHeight = 1
+	}
+	lines := 1 + 2*(1+heatHeight)
+	if includeContext {
+		lines++
+	}
 	return lines
 }
 

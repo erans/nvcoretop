@@ -118,7 +118,9 @@ Common export fields include:
 `i`, `name`, `uuid`, `util`, `mem_util`, `mem_used`, `mem_total`, `temp`,
 `power`, `power_limit`, `sm_clock`, `mem_clock`, `fan`, `proc_count`,
 `proc_mem`, `pcie_tx`, `pcie_rx`, `nvlink_tx`, `nvlink_rx`, `ecc_sbe`,
-`ecc_dbe`, `sm_active`, `tensor_active`, `mem_pipe_active`, `fp32_active`.
+`ecc_dbe`, `sm_active`, `tensor_active`, `dram_active`, `fp32_active`.
+
+`mem_pipe_active` is still accepted as a compatibility alias for `dram_active`.
 
 Unsupported or unavailable fields are emitted as `null` in JSON and empty
 values in CSV.

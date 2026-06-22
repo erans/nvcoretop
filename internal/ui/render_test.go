@@ -313,6 +313,27 @@ func TestRenderTensorWallLineBudgetPreservesFooterHelpAndOverflow(t *testing.T) 
 	}
 }
 
+func TestRenderTensorWallDropsSecondaryContextBeforePrimaryBlocks(t *testing.T) {
+	model := NewModel(Options{NoColor: true})
+	snapshot := snapshotWithTensorActivity()
+	snapshot.Devices = snapshot.Devices[:2]
+	model, _ = updateModel(model, SnapshotMsg(snapshot))
+	model, _ = updateModel(model, tea.WindowSizeMsg{Width: 100, Height: 14})
+	model, _ = updateModel(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+
+	view := model.View()
+	for _, want := range []string{"GPU 0", "GPU 1", "Tensor Pipe 92%", "DRAM 71%", "Tensor Pipe 63%", "DRAM 51%"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("compact tensor wall missing primary metric %q in:\n%s", want, view)
+		}
+	}
+	for _, unwanted := range []string{"  SM 84%", "  FP32 33%", "  source NVML+DCGM", "... 1 more GPU(s)"} {
+		if strings.Contains(view, unwanted) {
+			t.Fatalf("compact tensor wall should drop secondary context before primary blocks, found %q in:\n%s", unwanted, view)
+		}
+	}
+}
+
 func TestRenderTensorWallExactFitShowsGPUBlockBeforeOverflow(t *testing.T) {
 	model := NewModel(Options{NoColor: true})
 	snapshot := snapshotWithTensorActivity()
@@ -326,7 +347,7 @@ func TestRenderTensorWallExactFitShowsGPUBlockBeforeOverflow(t *testing.T) {
 	if len(lines) > model.height {
 		t.Fatalf("tensor wall line count = %d, want <= %d:\n%s", len(lines), model.height, view)
 	}
-	for _, want := range []string{"Tensor/DRAM Activity Wall", "GPU 0", "Tensor Pipe 92%", "DRAM 71%", "source NVML+DCGM"} {
+	for _, want := range []string{"Tensor/DRAM Activity Wall", "GPU 0", "Tensor Pipe 92%", "DRAM 71%"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("exact-fit tensor wall missing %q in:\n%s", want, view)
 		}
