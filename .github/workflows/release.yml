@@ -1,0 +1,105 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Version tag to release, for example v0.1.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build Linux amd64 release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            version="${{ github.event.inputs.tag }}"
+          else
+            version="${GITHUB_REF_NAME}"
+          fi
+
+          if [[ ! "${version}" =~ ^v[0-9]+(\.[0-9]+){1,2}([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "version tag must look like v0.1.0 or v0.1.0-rc.1: ${version}" >&2
+            exit 1
+          fi
+
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.version.outputs.version }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Check module tidiness
+        run: go mod tidy -diff
+
+      - name: Check whitespace
+        run: git diff --check
+
+      - name: Test
+        run: go test ./...
+
+      - name: Test with DCGM tag
+        run: go test -tags dcgm ./...
+
+      - name: Build release binary
+        env:
+          CGO_ENABLED: "1"
+          GOOS: linux
+          GOARCH: amd64
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p dist/nvcoretop_${VERSION}_linux_amd64
+          go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" \
+            -o "dist/nvcoretop_${VERSION}_linux_amd64/nvcoretop" \
+            ./cmd/nvcoretop
+          cp README.md LICENSE "dist/nvcoretop_${VERSION}_linux_amd64/"
+
+      - name: Package release
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          tar -C dist -czf "dist/nvcoretop_${VERSION}_linux_amd64.tar.gz" \
+            "nvcoretop_${VERSION}_linux_amd64"
+          cd dist
+          sha256sum "nvcoretop_${VERSION}_linux_amd64.tar.gz" \
+            > "nvcoretop_${VERSION}_linux_amd64.tar.gz.sha256"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if gh release view "${VERSION}" >/dev/null 2>&1; then
+            gh release upload "${VERSION}" \
+              "dist/nvcoretop_${VERSION}_linux_amd64.tar.gz" \
+              "dist/nvcoretop_${VERSION}_linux_amd64.tar.gz.sha256" \
+              --clobber
+          else
+            gh release create "${VERSION}" \
+              "dist/nvcoretop_${VERSION}_linux_amd64.tar.gz" \
+              "dist/nvcoretop_${VERSION}_linux_amd64.tar.gz.sha256" \
+              --title "nvcoretop ${VERSION}" \
+              --generate-notes
+          fi
