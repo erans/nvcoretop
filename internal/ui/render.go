@@ -55,7 +55,7 @@ func (m Model) renderOverview() string {
 			memCell(device),
 			tempCell(device),
 			powerCell(device),
-			CoresView(device, m.dcgmView || m.snapshot.Source == gpu.SourceNVMLDCGM),
+			overviewCoresCell(device, m.dcgmView || m.snapshot.Source == gpu.SourceNVMLDCGM),
 		))
 	}
 	if len(m.snapshot.Devices) == 0 {
@@ -67,14 +67,11 @@ func (m Model) renderOverview() string {
 func (m Model) renderDegraded() string {
 	lines := make([]string, 0, len(m.snapshot.Devices))
 	for _, device := range SortDevices(m.snapshot.Devices, m.sort) {
-		lines = append(lines, fmt.Sprintf("GPU %d %s  util %s  mem %s  temp %s  pwr %s",
-			device.Index,
-			device.Name,
-			percentText(device.GPUUtil),
-			memCell(device),
-			tempCell(device),
-			powerCell(device),
-		))
+		lines = append(lines,
+			truncateRunes(fmt.Sprintf("GPU %d %s", device.Index, device.Name), m.width),
+			truncateRunes(fmt.Sprintf("  util %s  mem %s", percentText(device.GPUUtil), memCell(device)), m.width),
+			truncateRunes(fmt.Sprintf("  temp %s  pwr %s", tempCell(device), powerCell(device)), m.width),
+		)
 	}
 	if len(lines) == 0 {
 		return "waiting for GPU samples..."
@@ -83,12 +80,26 @@ func (m Model) renderDegraded() string {
 }
 
 func (m Model) renderDetail(device gpu.DeviceSample) string {
-	history, _ := m.history.Device(device.Index)
+	history, ok := m.history.Device(device.Index)
+	utilHistory := "n/a"
+	tempHistory := "n/a"
+	powerHistory := "n/a"
+	if ok {
+		if history.Util != nil {
+			utilHistory = Sparkline(history.Util.Values(), 32)
+		}
+		if history.Temp != nil {
+			tempHistory = Sparkline(history.Temp.Values(), 32)
+		}
+		if history.Power != nil {
+			powerHistory = Sparkline(history.Power.Values(), 32)
+		}
+	}
 	lines := []string{
 		fmt.Sprintf("Detail GPU %d %s", device.Index, device.Name),
-		fmt.Sprintf("Util   %s", Sparkline(history.Util.Values(), 32)),
-		fmt.Sprintf("Temp   %s", Sparkline(history.Temp.Values(), 32)),
-		fmt.Sprintf("Power  %s", Sparkline(history.Power.Values(), 32)),
+		fmt.Sprintf("Util   %s", utilHistory),
+		fmt.Sprintf("Temp   %s", tempHistory),
+		fmt.Sprintf("Power  %s", powerHistory),
 		fmt.Sprintf("Clocks SM %s MHz  MEM %s MHz", optionalUint(device.SMClockMHz), optionalUint(device.MemClockMHz)),
 		fmt.Sprintf("Throttle %s", throttleText(device.ThrottleReasons)),
 		fmt.Sprintf("Fan %s", optionalUint(device.FanPct)),
@@ -145,6 +156,13 @@ func powerCell(device gpu.DeviceSample) string {
 	return fmt.Sprintf("%.0fW", device.PowerW.Value)
 }
 
+func overviewCoresCell(device gpu.DeviceSample, preferDCGM bool) string {
+	if preferDCGM && device.SMActivePct.OK {
+		return fmt.Sprintf("SM %s", percentFloatText(device.SMActivePct))
+	}
+	return CoresView(device, false)
+}
+
 func optionalUint(value gpu.Optional[uint32]) string {
 	if !value.OK {
 		return "n/a"
@@ -182,4 +200,18 @@ func processTable(device gpu.DeviceSample) string {
 
 func bytesToGB(value uint64) float64 {
 	return float64(value) / 1024 / 1024 / 1024
+}
+
+func truncateRunes(value string, width int) string {
+	if width <= 0 {
+		return value
+	}
+	runes := []rune(value)
+	if len(runes) <= width {
+		return value
+	}
+	if width <= 3 {
+		return string(runes[:width])
+	}
+	return string(runes[:width-3]) + "..."
 }
