@@ -1,10 +1,10 @@
-# nvcoretop Tensor Heatmap Wall Implementation Plan
+# nvcoretop Tensor And DRAM Heatmap Wall Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a `t`-toggleable all-GPU tensor heatmap wall with readable color and no-color output.
+**Goal:** Add a `t`-toggleable all-GPU wall that shows Tensor Pipe and DRAM activity together with readable color and no-color output.
 
-**Architecture:** Keep the feature inside `internal/ui`. Add a small view-mode field to `Model`, render the tensor wall from a new focused `tensor_wall.go`, and reuse the existing `gpu.DeviceSample` DCGM fields. Use Lipgloss styles only at render time so `--no-color` remains plain text.
+**Architecture:** Keep the feature inside `internal/ui`. Add a small view-mode field to `Model`, render the Tensor/DRAM wall from a new focused `tensor_wall.go`, and reuse the existing `gpu.DeviceSample` DCGM fields. `TensorActivePct` is DCGM tensor pipe active; `MemPipeActivePct` is DCGM DRAM active and must be labeled `DRAM` in the UI. Use Lipgloss styles only at render time so `--no-color` remains plain text.
 
 **Tech Stack:** Go 1.24, Bubble Tea model/update flow, Lipgloss styling, existing `internal/gpu` sample types, `go test`.
 
@@ -12,15 +12,15 @@
 
 ## Scope Check
 
-The approved spec covers one UI feature: a dedicated tensor heatmap wall plus visible color styling. It does not require CI, release automation, DCGM collection changes, mouse interaction, or a web UI.
+The approved spec covers one UI feature: a dedicated Tensor Pipe + DRAM activity wall plus visible color styling. It does not require CI, release automation, DCGM collection changes, mouse interaction, or a web UI.
 
 ## File Structure
 
 - Modify `internal/ui/model.go`: add explicit UI view mode and key handling for `t` and `o`.
 - Modify `internal/ui/model_test.go`: cover tensor wall key behavior.
 - Modify `internal/ui/render.go`: branch `View()` into tensor wall rendering, and update help text.
-- Create `internal/ui/tensor_wall.go`: render all-GPU tensor wall blocks and heatmap rows.
-- Modify `internal/ui/render_test.go`: cover tensor wall rendering, unavailable tensor data, no-color behavior, color behavior, and width bounds.
+- Create `internal/ui/tensor_wall.go`: render all-GPU Tensor Pipe and DRAM wall blocks and heatmap rows.
+- Modify `internal/ui/render_test.go`: cover Tensor/DRAM wall rendering, unavailable Tensor Pipe or DRAM data, no-color behavior, color behavior, and width bounds.
 - Modify `internal/ui/style.go`: add style helpers for activity levels and make existing styles visible in rendered UI.
 
 ## Task 1: Add Tensor Wall View Mode And Keys
@@ -145,7 +145,7 @@ git add internal/ui/model.go internal/ui/model_test.go
 git commit -m "feat: add tensor wall view mode"
 ```
 
-## Task 2: Render Tensor Wall In No-Color Mode
+## Task 2: Render Tensor And DRAM Wall In No-Color Mode
 
 **Files:**
 - Modify: `internal/ui/render.go`
@@ -165,15 +165,16 @@ func TestRenderTensorWallNoColorMultipleGPUs(t *testing.T) {
 
 	view := model.View()
 	for _, want := range []string{
-		"Tensor Activity Wall",
+		"Tensor/DRAM Activity Wall",
 		"GPU 0",
 		"GPU 1",
 		"GPU 2",
-		"Tensor 92%",
+		"Tensor Pipe 92%",
+		"DRAM 71%",
 		"SM 84%",
-		"MemPipe 71%",
 		"FP32 33%",
-		"tensor unavailable",
+		"Tensor Pipe unavailable",
+		"DRAM 15%",
 		"source NVML+DCGM",
 	} {
 		if !strings.Contains(view, want) {
@@ -191,7 +192,7 @@ func TestRenderTensorWallEmptySnapshot(t *testing.T) {
 	model, _ = updateModel(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
 
 	view := model.View()
-	for _, want := range []string{"Tensor Activity Wall", "waiting for GPU samples"} {
+	for _, want := range []string{"Tensor/DRAM Activity Wall", "waiting for GPU samples"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("empty tensor wall missing %q in:\n%s", want, view)
 		}
@@ -205,7 +206,7 @@ func TestRenderTensorWallLineWidthBoundedNoColor(t *testing.T) {
 		snapshot.Devices[i].Name = "NVIDIA H100 SXM5 80GB Very Long Engineering Sample Name"
 	}
 	model, _ = updateModel(model, SnapshotMsg(snapshot))
-	model, _ = updateModel(model, tea.WindowSizeMsg{Width: 72, Height: 14})
+	model, _ = updateModel(model, tea.WindowSizeMsg{Width: 72, Height: 24})
 	model, _ = updateModel(model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
 
 	view := model.View()
@@ -343,7 +344,7 @@ func (m Model) renderTensorWall() string {
 		height = tensorWallDefaultHeight
 	}
 
-	lines := []string{"Tensor Activity Wall"}
+	lines := []string{"Tensor/DRAM Activity Wall"}
 	devices := SortDevices(m.snapshot.Devices, m.sort)
 	if len(devices) == 0 {
 		lines = append(lines, "waiting for GPU samples...")
@@ -365,17 +366,17 @@ func renderTensorGPUBlock(device gpu.DeviceSample, source gpu.Source, width, hea
 	name := truncateRunes(device.Name, tensorNameWidth(width))
 	lines := []string{
 		truncateRunes(fmt.Sprintf(
-			"GPU %-2d %-*s Tensor %s  SM %s  MemPipe %s  FP32 %s",
+			"GPU %-2d %-*s Tensor Pipe %s  DRAM %s",
 			device.Index,
 			tensorNameWidth(width),
 			name,
 			percentFloatText(device.TensorActivePct),
-			percentFloatText(device.SMActivePct),
 			percentFloatText(device.MemPipeActivePct),
-			percentFloatText(device.FP32ActivePct),
 		), width),
 		truncateRunes(fmt.Sprintf(
-			"  util %s  mem %s  temp %s  source %s",
+			"  SM %s  FP32 %s  util %s  mem %s  temp %s  source %s",
+			percentFloatText(device.SMActivePct),
+			percentFloatText(device.FP32ActivePct),
 			percentText(device.GPUUtil),
 			memCell(device),
 			tempCell(device),
@@ -383,13 +384,17 @@ func renderTensorGPUBlock(device gpu.DeviceSample, source gpu.Source, width, hea
 		), width),
 	}
 
-	if !device.TensorActivePct.OK {
-		lines = append(lines, truncateRunes("  tensor unavailable (DCGM field missing)", width))
-		return lines
-	}
+	lines = appendActivityHeatmap(lines, "Tensor Pipe", device.TensorActivePct, width, heatWidth, heatHeight)
+	lines = appendActivityHeatmap(lines, "DRAM", device.MemPipeActivePct, width, heatWidth, heatHeight)
+	return lines
+}
 
-	for _, row := range tensorHeatmapRows(device.TensorActivePct, heatWidth, heatHeight) {
-		lines = append(lines, truncateRunes("  "+row, width))
+func appendActivityHeatmap(lines []string, label string, value gpu.Optional[float64], width, heatWidth, heatHeight int) []string {
+	if !value.OK {
+		return append(lines, truncateRunes(fmt.Sprintf("  %-11s unavailable (DCGM field missing)", label), width))
+	}
+	for _, row := range tensorHeatmapRows(value, heatWidth, heatHeight) {
+		lines = append(lines, truncateRunes(fmt.Sprintf("  %-11s %s", label, row), width))
 	}
 	return lines
 }
@@ -424,7 +429,7 @@ func tensorHeatmapWidth(width int) int {
 	if width <= 0 {
 		width = tensorWallDefaultWidth
 	}
-	return clampInt(width-4, tensorWallMinHeatmapWidth, tensorWallMaxHeatmapWidth)
+	return clampInt(width-16, tensorWallMinHeatmapWidth, tensorWallMaxHeatmapWidth)
 }
 
 func tensorHeatmapHeight(height, gpuCount int) int {
@@ -436,11 +441,11 @@ func tensorHeatmapHeight(height, gpuCount int) int {
 	}
 	available := height - 4
 	perGPU := available / gpuCount
-	return clampInt(perGPU-3, tensorWallMinHeatmapHeight, tensorWallMaxHeatmapHeight)
+	return clampInt((perGPU-3)/2, tensorWallMinHeatmapHeight, tensorWallMaxHeatmapHeight)
 }
 
 func tensorNameWidth(width int) int {
-	return clampInt(width-78, 8, 28)
+	return clampInt(width-76, 8, 28)
 }
 
 func clampInt(value, minValue, maxValue int) int {
@@ -558,17 +563,17 @@ func (p palette) optionalActivity(value float64, ok bool) lipgloss.Style {
 
 - [ ] **Step 4: Apply color in the tensor wall renderer**
 
-Change the `renderTensorWall` loop in `internal/ui/tensor_wall.go` from:
+Change the `renderTensorWall` title in `internal/ui/tensor_wall.go` from:
 
 ```go
-	lines := []string{"Tensor Activity Wall"}
+	lines := []string{"Tensor/DRAM Activity Wall"}
 ```
 
 to:
 
 ```go
 	st := styles(m.options.NoColor)
-	lines := []string{st.hot.Render("Tensor Activity Wall")}
+	lines := []string{st.hot.Render("Tensor/DRAM Activity Wall")}
 ```
 
 Change the block call from:
@@ -599,17 +604,17 @@ Replace the `lines := []string{...}` block inside `renderTensorGPUBlock` with:
 
 ```go
 	header := fmt.Sprintf(
-		"GPU %-2d %-*s Tensor %s  SM %s  MemPipe %s  FP32 %s",
+		"GPU %-2d %-*s Tensor Pipe %s  DRAM %s",
 		device.Index,
 		tensorNameWidth(width),
 		name,
 		st.optionalActivity(optionalFloatPercent(device.TensorActivePct), device.TensorActivePct.OK).Render(percentFloatText(device.TensorActivePct)),
-		st.optionalActivity(optionalFloatPercent(device.SMActivePct), device.SMActivePct.OK).Render(percentFloatText(device.SMActivePct)),
 		st.optionalActivity(optionalFloatPercent(device.MemPipeActivePct), device.MemPipeActivePct.OK).Render(percentFloatText(device.MemPipeActivePct)),
-		st.optionalActivity(optionalFloatPercent(device.FP32ActivePct), device.FP32ActivePct.OK).Render(percentFloatText(device.FP32ActivePct)),
 	)
 	context := fmt.Sprintf(
-		"  util %s  mem %s  temp %s  source %s",
+		"  SM %s  FP32 %s  util %s  mem %s  temp %s  source %s",
+		st.optionalActivity(optionalFloatPercent(device.SMActivePct), device.SMActivePct.OK).Render(percentFloatText(device.SMActivePct)),
+		st.optionalActivity(optionalFloatPercent(device.FP32ActivePct), device.FP32ActivePct.OK).Render(percentFloatText(device.FP32ActivePct)),
 		st.optionalActivity(percentFloat(device.GPUUtil), device.GPUUtil.OK).Render(percentText(device.GPUUtil)),
 		memCell(device),
 		tempCell(device),
@@ -622,36 +627,58 @@ Replace the `lines := []string{...}` block inside `renderTensorGPUBlock` with:
 	lines := []string{header, context}
 ```
 
-Change the unavailable branch from:
+Change `appendActivityHeatmap` from:
 
 ```go
-		lines = append(lines, truncateRunes("  tensor unavailable (DCGM field missing)", width))
+func appendActivityHeatmap(lines []string, label string, value gpu.Optional[float64], width, heatWidth, heatHeight int) []string {
+	if !value.OK {
+		return append(lines, truncateRunes(fmt.Sprintf("  %-11s unavailable (DCGM field missing)", label), width))
+	}
+	for _, row := range tensorHeatmapRows(value, heatWidth, heatHeight) {
+		lines = append(lines, truncateRunes(fmt.Sprintf("  %-11s %s", label, row), width))
+	}
+	return lines
+}
 ```
 
 to:
 
 ```go
-		unavailable := "  " + st.muted.Render("tensor unavailable (DCGM field missing)")
+func appendActivityHeatmap(lines []string, label string, value gpu.Optional[float64], width, heatWidth, heatHeight int, st palette, noColor bool) []string {
+	labelText := label
+	if !noColor {
+		labelText = st.muted.Render(label)
+	}
+	if !value.OK {
+		unavailable := fmt.Sprintf("  %-11s %s", labelText, st.muted.Render("unavailable (DCGM field missing)"))
 		if noColor {
 			unavailable = truncateRunes(unavailable, width)
 		}
-		lines = append(lines, unavailable)
+		return append(lines, unavailable)
+	}
+	for _, row := range tensorHeatmapRows(value, heatWidth, heatHeight, st) {
+		line := fmt.Sprintf("  %-11s %s", labelText, row)
+		if noColor {
+			line = truncateRunes(line, width)
+		}
+		lines = append(lines, line)
+	}
+	return lines
+}
 ```
 
-Change the heatmap loop from:
+Change the heatmap calls from:
 
 ```go
-	for _, row := range tensorHeatmapRows(device.TensorActivePct, heatWidth, heatHeight) {
-		lines = append(lines, truncateRunes("  "+row, width))
-	}
+	lines = appendActivityHeatmap(lines, "Tensor Pipe", device.TensorActivePct, width, heatWidth, heatHeight)
+	lines = appendActivityHeatmap(lines, "DRAM", device.MemPipeActivePct, width, heatWidth, heatHeight)
 ```
 
 to:
 
 ```go
-	for _, row := range tensorHeatmapRows(device.TensorActivePct, heatWidth, heatHeight, st) {
-		lines = append(lines, "  "+row)
-	}
+	lines = appendActivityHeatmap(lines, "Tensor Pipe", device.TensorActivePct, width, heatWidth, heatHeight, st, noColor)
+	lines = appendActivityHeatmap(lines, "DRAM", device.MemPipeActivePct, width, heatWidth, heatHeight, st, noColor)
 ```
 
 Change the heatmap function signature from:
