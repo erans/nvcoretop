@@ -10,13 +10,14 @@ import (
 
 	"nvcoretop/internal/app"
 	"nvcoretop/internal/export"
-	"nvcoretop/internal/gpu"
+	"nvcoretop/internal/sampler"
 	"nvcoretop/internal/ui"
 )
 
 var version = "dev"
 
 var runTUI = ui.Run
+var createSampler = sampler.New
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
@@ -47,9 +48,20 @@ func run(args []string, stdout, stderr io.Writer) (err error) {
 			format = export.FormatCSV
 		}
 
-		sampler := gpu.NewFakeSampler([]gpu.FakeStep{{
-			Snapshot: gpu.Snapshot{Source: gpu.SourceNVML},
-		}})
+		created, createErr := createSampler(sampler.Options{ForceDCGM: cfg.DCGM})
+		if createErr != nil {
+			return createErr
+		}
+		defer func() {
+			if closeErr := created.Sampler.Close(); err == nil && closeErr != nil {
+				err = closeErr
+			}
+		}()
+		if created.Notice != "" {
+			if _, printErr := fmt.Fprintln(stderr, created.Notice); printErr != nil {
+				return printErr
+			}
+		}
 
 		writer := stdout
 		if cfg.Output != "-" {
@@ -65,7 +77,7 @@ func run(args []string, stdout, stderr io.Writer) (err error) {
 			writer = file
 		}
 
-		return export.Run(context.Background(), sampler, writer, export.Options{
+		return export.Run(context.Background(), created.Sampler, writer, export.Options{
 			Format:   format,
 			Interval: cfg.Interval,
 			Duration: cfg.Duration,
@@ -73,11 +85,21 @@ func run(args []string, stdout, stderr io.Writer) (err error) {
 			Fields:   cfg.Fields,
 		})
 	default:
-		sampler := gpu.NewFakeSampler([]gpu.FakeStep{{
-			Snapshot: gpu.Snapshot{Source: gpu.SourceNVML},
-		}})
-		defer sampler.Close()
-		return runTUI(context.Background(), sampler, cfg.Interval, ui.Options{
+		created, createErr := createSampler(sampler.Options{ForceDCGM: cfg.DCGM})
+		if createErr != nil {
+			return createErr
+		}
+		defer func() {
+			if closeErr := created.Sampler.Close(); err == nil && closeErr != nil {
+				err = closeErr
+			}
+		}()
+		if created.Notice != "" {
+			if _, printErr := fmt.Fprintln(stderr, created.Notice); printErr != nil {
+				return printErr
+			}
+		}
+		return runTUI(context.Background(), created.Sampler, cfg.Interval, ui.Options{
 			Interval:      cfg.Interval.String(),
 			NoColor:       cfg.NoColor,
 			ForceDCGMView: cfg.DCGM,
@@ -89,7 +111,7 @@ func helpText() string {
 	return fmt.Sprintf(`nvcoretop %s
 
 Usage:
-  nvcoretop [--json|--csv] [--output FILE] [--interval DURATION] [--duration DURATION] [--count N] [--fields LIST]
+  nvcoretop [--json|--csv] [--output FILE] [--interval DURATION] [--duration DURATION] [--count N] [--fields LIST] [--dcgm] [--no-color]
   nvcoretop --version
   nvcoretop --help
 
@@ -101,5 +123,7 @@ Options:
   --duration      stop after the given duration
   --count         stop after N samples
   --fields        comma-separated export fields
+  --dcgm          force DCGM activity
+  --no-color      disable colored output
 `, version)
 }
