@@ -245,7 +245,11 @@ func applyActivityValue(device *gpu.DeviceSample, value nvidia.FieldValue_v1) {
 		return
 	}
 
-	percent := normalizePercent(value.Float64())
+	raw := value.Float64()
+	if isBlankFloat(raw) {
+		return
+	}
+	percent := normalizePercent(raw)
 	switch value.FieldID {
 	case nvidia.DCGM_FI_PROF_SM_ACTIVE:
 		device.SMActivePct = gpu.Some(percent)
@@ -263,4 +267,8 @@ func normalizePercent(value float64) float64 {
 		return value * 100
 	}
 	return value
+}
+
+func isBlankFloat(value float64) bool {
+	return value >= nvidia.DCGM_FT_FP64_BLANK
 }

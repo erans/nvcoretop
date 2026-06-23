@@ -160,6 +160,32 @@ func TestRealEnrichMapsSuccessfulValuesAndSkipsFailedFields(t *testing.T) {
 	assertOptionalFloat(t, "FP32ActivePct", device.FP32ActivePct, 50)
 }
 
+func TestRealEnrichSkipsBlankActivityValues(t *testing.T) {
+	api := &fakeDCGMAPI{
+		latestValues: map[uint][]nvidia.FieldValue_v1{
+			0: {
+				floatField(nvidia.DCGM_FI_PROF_SM_ACTIVE, nvidia.DCGM_ST_OK, nvidia.DCGM_FT_FP64_BLANK),
+				floatField(nvidia.DCGM_FI_PROF_PIPE_TENSOR_ACTIVE, nvidia.DCGM_ST_OK, nvidia.DCGM_FT_FP64_BLANK),
+				floatField(nvidia.DCGM_FI_PROF_DRAM_ACTIVE, nvidia.DCGM_ST_OK, nvidia.DCGM_FT_FP64_BLANK),
+				floatField(nvidia.DCGM_FI_PROF_PIPE_FP32_ACTIVE, nvidia.DCGM_ST_OK, nvidia.DCGM_FT_FP64_BLANK),
+			},
+		},
+	}
+	client := &Client{api: api, active: true}
+
+	got, err := client.Enrich(context.Background(), gpu.Snapshot{
+		Source:  gpu.SourceNVML,
+		Devices: []gpu.DeviceSample{{Index: 0}},
+	})
+	if err != nil {
+		t.Fatalf("Enrich() error = %v", err)
+	}
+	device := got.Devices[0]
+	if device.SMActivePct.OK || device.TensorActivePct.OK || device.MemPipeActivePct.OK || device.FP32ActivePct.OK {
+		t.Fatalf("blank activity values were applied: %#v", device)
+	}
+}
+
 func TestRealEnrichRespectsContextCancellationBeforeDCGMWork(t *testing.T) {
 	api := &fakeDCGMAPI{}
 	client := &Client{api: api, active: true}
